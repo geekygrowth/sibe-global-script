@@ -1,4 +1,4 @@
-//Last Updated: 2026-07-07 by Nicolask Rak @nicolasrak
+//Last Updated: 2026-08-18 by Nicolask Rak @nicolasrak
 //
 //****************
 //GLOBAL VARIABLES
@@ -14,7 +14,9 @@ const fieldMappings = [
   { key: 'utm_campaign', selector: '[data-utm-id="campaign"]' },
   { key: 'utm_term',     selector: '[data-utm-id="term"]' },
   { key: 'utm_content',  selector: '[data-utm-id="content"]' },
-  { key: 'gclid',        selector: '[data-utm-id="gclid"]' }
+  { key: 'gclid',        selector: '[data-utm-id="gclid"]' },
+  { key: 'msclkid',      selector: '[data-utm-id="msclkid"]' },
+  { key: 'fbclid',       selector: '[data-utm-id="fbclid"]' }
 ];
 
 // input selectors
@@ -33,8 +35,20 @@ const ltFieldMappings = [
   { key: 'lt-utm_campaign', selector: '[data-utm-id="lt-campaign"]' },
   { key: 'lt-utm_term',     selector: '[data-utm-id="lt-term"]' },
   { key: 'lt-utm_content',  selector: '[data-utm-id="lt-content"]' },
-  { key: 'lt-gclid',        selector: '[data-utm-id="lt-gclid"]' }
+  { key: 'lt-gclid',        selector: '[data-utm-id="lt-gclid"]' },
+  { key: 'lt-msclkid',      selector: '[data-utm-id="lt-msclkid"]' },
+  { key: 'lt-fbclid',       selector: '[data-utm-id="lt-fbclid"]' }
 ];
+
+// Which URL params are allowed to TRIGGER a last-touch overwrite.
+// fbclid is deliberately excluded: Facebook and Instagram append it to EVERY
+// outbound link (organic posts, comments, DMs), not only paid ads. If it could
+// trigger the overwrite below, an organic social click would wipe existing paid
+// attribution and rewrite every lt- value as an empty string.
+// fbclid is still CAPTURED whenever the overwrite fires - it is just not allowed
+// to fire it on its own. Pending Omer's A/B decision on the Asana ticket
+// "Meta Click ID collection"; switch this back to fieldMappings if he picks B.
+const ltTriggerMappings = fieldMappings.filter(mapping => mapping.key !== 'fbclid');
 
 // input selectors
 const ltInitialPathInputSelector = '[data-type="lt-initial-path-input"]';
@@ -57,6 +71,21 @@ const phTypeInputSelector = '[data-type="ph-type-input"]';
 const phLocationInputSelector = '[data-type="ph-location-input"]';
 const phIntentInputSelector = '[data-type="ph-intent-input"]';
 let activeSubmitButton = null;
+
+// ==========================================
+// 4. META PIXEL COOKIES (_fbp / _fbc)
+// ==========================================
+// These two are NOT URL params - they are first-party cookies written by the
+// Meta Pixel, so they are read from document.cookie rather than urlParams,
+// and at SUBMIT time rather than page load (the Pixel writes them
+// asynchronously and is often slower than this script).
+//   _fbp = browser id, no touch semantics, so no lt- twin.
+//   _fbc = fb.1.<clickTime>.<fbclid>, overwritten by the Pixel on every new ad
+//          click, so it is inherently a LAST-touch value.
+const fbpInputSelector = '[data-type="fbp-input"]';
+const ltFbcInputSelector = '[data-type="lt-fbc-input"]';
+// localStorage key for the manually-built _fbc fallback
+const fbcFallbackKey = 'lt-fbc-fallback';
 
 
 
@@ -98,7 +127,9 @@ function saveLastVisitValues() {
   const isInternalTraffic = document.referrer.includes(window.location.hostname);
 
   // 2. Check if the current URL contains ANY standard marketing parameters
-  const hasMarketingParams = fieldMappings.some(mapping => urlParams.has(mapping.key));
+  // Uses ltTriggerMappings, not fieldMappings, so a bare fbclid (which Facebook
+  // adds to organic links too) cannot trigger the overwrite on its own.
+  const hasMarketingParams = ltTriggerMappings.some(mapping => urlParams.has(mapping.key));
 
   // 3. The Aggressive Overwrite (ONLY if it's external inbound traffic)
   if (hasMarketingParams && !isInternalTraffic) {
@@ -108,11 +139,46 @@ function saveLastVisitValues() {
     localStorage.setItem(ltInitialReferrerKey, document.referrer || 'direct');
 
     // Overwrite UTMs
+    // Still loops fieldMappings, so lt-fbclid IS written when a properly tagged
+    // ad click fires the overwrite - fbclid just cannot fire it by itself.
     fieldMappings.forEach(mapping => {
       const value = urlParams.get(mapping.key) || '';
       localStorage.setItem('lt-' + mapping.key, value);
     });
   }
+}
+
+function saveFbcFallback() {
+  // Meta's _fbc cookie only exists once the Pixel has loaded AND ad consent
+  // allows it, so it is usually absent on the landing pageview - exactly the
+  // pageview that carries the fbclid. Build Meta's documented
+  // fb.1.<timestamp>.<fbclid> format ourselves and keep it as a fallback.
+  // Stamped here at page load so the timestamp stays close to the actual click.
+  // The real cookie always wins over this when it exists.
+  const fbclid = urlParams.get('fbclid');
+
+  if (!fbclid) {
+    return;
+  }
+
+  localStorage.setItem(fbcFallbackKey, 'fb.1.' + Date.now() + '.' + fbclid);
+}
+
+function getCookieValue(cookieName) {
+// This function reads a single raw cookie by name, returning '' when absent
+  const match = document.cookie.match(new RegExp('(?:^|;\\s*)' + cookieName + '=([^;]*)'));
+
+  return match ? decodeURIComponent(match[1]) : '';
+}
+
+function populateMetaCookieFields() {
+  // Called at submit time (and once at load as a best effort for returning
+  // visitors whose cookies already exist). Both fields stay empty when the
+  // Pixel is blocked by cookie consent, which is the correct outcome.
+  updateInputValue(fbpInputSelector, getCookieValue('_fbp'));
+
+  const fbc = getCookieValue('_fbc') || localStorage.getItem(fbcFallbackKey) || '';
+  updateInputValue(ltFbcInputSelector, fbc);
 }
 
 function updateInputValue(selector, value) {
@@ -319,6 +385,22 @@ function handleButtonAnalytics() {
   });
 }
 
+function handleMetaCookieCapture() {
+  const forms = document.querySelectorAll(formSelector);
+  if (!forms.length) return;
+
+  // 1. Best effort at load - covers returning visitors whose Pixel cookies
+  // already exist from an earlier session
+  populateMetaCookieFields();
+
+  // 2. Authoritative read at submit time, by which point the Pixel has almost
+  // always finished writing. Deliberately kept out of handleButtonAnalytics
+  // because that one only injects when a submit button is known
+  forms.forEach(form => {
+    form.addEventListener('submit', populateMetaCookieFields, true); // capture phase, same as above
+  });
+}
+
 //****************
 //INIT
 //****************
@@ -327,6 +409,9 @@ saveFirstVisitValues();
 
 //LAST TOUCH
 saveLastVisitValues();
+
+//META PIXEL _fbc fallback (must run before any field population)
+saveFbcFallback();
 
 //Populating fields & appending button urls
 populateHiddenFields();
@@ -337,6 +422,9 @@ validateEmails();
 
 //Checking which btn was clicked
 handleButtonAnalytics();
+
+//Meta Pixel cookies (_fbp / _fbc) - read from document.cookie at submit time
+handleMetaCookieCapture();
 //
 
   document.addEventListener('DOMContentLoaded', function() {
