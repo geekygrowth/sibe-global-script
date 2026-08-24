@@ -14,6 +14,22 @@ different — a live site running code that no longer exists in git.
 
 To ship a change, always cut a **new** version. Never re-point an old one.
 
+## Two files, two purposes
+
+`staging-script.js` is for work in progress, served from `@main` and never
+tagged. `global-script.js` is production, served from a pinned tag.
+
+Default to editing `staging-script.js`. Only touch `global-script.js` as part
+of a promotion, and promote by copying the whole file — never by hand-merging,
+which lets the two drift so production ships something staging never tested.
+
+After pushing a staging change, purge the CDN or the old file is served for up
+to 12 hours:
+
+```bash
+curl "https://purge.jsdelivr.net/gh/geekygrowth/sibe-global-script@main/staging-script.js"
+```
+
 ## Do not minify
 
 `global-script.js` exposes globals that other code references by name. A

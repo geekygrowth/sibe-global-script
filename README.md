@@ -32,7 +32,7 @@ Webflow → Site Settings → Custom Code → **Footer**:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@26.0.1/build/js/intlTelInput.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.1.0/global-script.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.2.0/global-script.js"></script>
 ```
 
 And in **Head**:
@@ -93,6 +93,57 @@ Put the previous tag back in the Webflow footer URL and publish. Old versions
 stay served forever, so this works instantly and needs no git operation.
 
 ---
+
+## Staging: iterating without burning a version
+
+`staging-script.js` exists so work-in-progress can be tested on
+`sibe.webflow.io` without cutting a tag for every experiment. It is served
+from the branch rather than a tag, so the URL never changes:
+
+```
+https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@main/staging-script.js
+```
+
+Point the **staging** Webflow footer at that once and leave it. Production
+stays on a pinned `@vX.Y.Z` URL of `global-script.js` and is never affected.
+
+### The loop
+
+```bash
+# 1. edit staging-script.js, check it parses
+node --check staging-script.js
+
+# 2. commit and push - no tag
+git add staging-script.js && git commit -m "wip: ..." && git push
+
+# 3. purge, or the CDN serves the old file for up to 12 hours
+curl "https://purge.jsdelivr.net/gh/geekygrowth/sibe-global-script@main/staging-script.js"
+```
+
+The purge response should read `"status": "finished"` with `"throttled": false`.
+If it says throttled, wait a minute and repeat — the endpoint is rate limited.
+
+Then **hard-refresh** the staging site (Ctrl+Shift+R). Branch URLs carry a
+7-day *browser* cache on top of the 12-hour CDN cache, so a normal reload can
+still show you the old script even after a successful purge.
+
+### Promoting to production
+
+Once it is approved, promote by copying the whole file — do not hand-merge, or
+staging and production will drift:
+
+```bash
+cp staging-script.js global-script.js
+node --check global-script.js
+git add -A && git commit -m "describe the change"
+git tag v1.3.0
+git push && git push --tags
+```
+
+Then bump the version in the production Webflow footer and publish.
+
+`global-script.js` should only ever change via that copy. Editing it directly
+means production ships something staging never tested.
 
 ## Depends on the Webflow side
 
