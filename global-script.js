@@ -16,7 +16,8 @@ const fieldMappings = [
   { key: 'utm_content',  selector: '[data-utm-id="content"]' },
   { key: 'gclid',        selector: '[data-utm-id="gclid"]' },
   { key: 'msclkid',      selector: '[data-utm-id="msclkid"]' },
-  { key: 'fbclid',       selector: '[data-utm-id="fbclid"]' }
+  { key: 'fbclid',       selector: '[data-utm-id="fbclid"]' },
+  { key: 'rdt_cid',      selector: '[data-utm-id="rdt_cid"]' }
 ];
 
 // input selectors
@@ -37,7 +38,8 @@ const ltFieldMappings = [
   { key: 'lt-utm_content',  selector: '[data-utm-id="lt-content"]' },
   { key: 'lt-gclid',        selector: '[data-utm-id="lt-gclid"]' },
   { key: 'lt-msclkid',      selector: '[data-utm-id="lt-msclkid"]' },
-  { key: 'lt-fbclid',       selector: '[data-utm-id="lt-fbclid"]' }
+  { key: 'lt-fbclid',       selector: '[data-utm-id="lt-fbclid"]' },
+  { key: 'lt-rdt_cid',      selector: '[data-utm-id="lt-rdt_cid"]' }
 ];
 
 // Which URL params are allowed to TRIGGER a last-touch overwrite.
@@ -48,6 +50,8 @@ const ltFieldMappings = [
 // fbclid is still CAPTURED whenever the overwrite fires - it is just not allowed
 // to fire it on its own. Pending Omer's A/B decision on the Asana ticket
 // "Meta Click ID collection"; switch this back to fieldMappings if he picks B.
+// gclid, msclkid and rdt_cid are NOT excluded: unlike fbclid, those are only
+// ever appended on a genuine paid ad click, so each is a real new last touch.
 const ltTriggerMappings = fieldMappings.filter(mapping => mapping.key !== 'fbclid');
 
 // input selectors
