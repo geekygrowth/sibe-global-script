@@ -91,6 +91,52 @@ const ltFbcInputSelector = '[data-type="lt-fbc-input"]';
 // localStorage key for the manually-built _fbc fallback
 const fbcFallbackKey = 'lt-fbc-fallback';
 
+// ==========================================
+// 5. PERSONAL-EMAIL DETECTION (shared)
+// ==========================================
+// Moved up here from inside validateEmails() so that function and the Book a
+// Demo gate below share one list. Kept as two separate copies they would drift
+// apart the first time someone adds a domain to only one of them.
+
+// 2. Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
+// Added common typos based on your client's request
+const blockedRoots = [
+  'gmail', 'gmai', 'googlemail', 'jmail',
+  'outlook', 'hotmail', 'live', 'msn',
+  'icloud', 'iclouud', 'me',
+  'yahoo', 'ymail',
+  'mg',
+  'qq', 'aol', 'cox', 'comcast',
+  'yandex', 'gmx', 'onmicrosoft'
+  // Add any other root words or common typos here
+];
+
+// 3. Define exact domains (for domains that are too risky to use as a root word)
+// E.g., If we blocked the root word "mail", it would accidentally block valid
+// corporate emails like "user@mail.companyllc.com".
+const exactDomains = [
+  'mail.ru', 'gmailcom'
+];
+
+// Build the regular expression strings
+const rootsPattern = blockedRoots.join('|');
+const exactPattern = exactDomains.map(d => d.replace(/\./g, '\\.')).join('|');
+
+// The New Regular Expression Breakdown:
+// Part 1: @([a-z0-9-]+\.)*(${rootsPattern})\.[a-z.]+$
+// -> Matches @, followed by optional subdomains, then the blocked root (e.g. gmai), a dot, and ANY domain extension (.com, .fr, .co.uk)
+// Part 2: @([a-z0-9-]+\.)*(${exactPattern})$
+// -> Matches exact domains like mail.ru
+const personalEmailRegex = new RegExp(
+  `@([a-z0-9-]+\\.)*(${rootsPattern})\\.[a-z.]+$|@([a-z0-9-]+\\.)*(${exactPattern})$`,
+  'i'
+);
+
+// Book a Demo gate selectors
+const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
+const emailErrorSelector = '[data-js="email-error"]';
+const emailErrorActiveClass = 'cc-active';
+
 
 
 //****************
@@ -270,39 +316,10 @@ function validateEmails() {
     return;
   }
 
-  // 2. Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
-  // Added common typos based on your client's request
-  const blockedRoots = [
-    'gmail', 'gmai', 'googlemail', 'jmail',
-    'outlook', 'hotmail', 'live', 'msn',
-    'icloud', 'iclouud', 'me',
-    'yahoo', 'ymail',
-    'mg',
-    'qq', 'aol', 'cox', 'comcast',
-    'yandex', 'gmx', 'onmicrosoft'
-    // Add any other root words or common typos here
-  ];
-
-  // 3. Define exact domains (for domains that are too risky to use as a root word)
-  // E.g., If we blocked the root word "mail", it would accidentally block valid
-  // corporate emails like "user@mail.companyllc.com".
-  const exactDomains = [
-    'mail.ru', 'gmailcom'
-  ];
-
-  // Build the regular expression strings
-  const rootsPattern = blockedRoots.join('|');
-  const exactPattern = exactDomains.map(d => d.replace(/\./g, '\\.')).join('|');
-
-  // The New Regular Expression Breakdown:
-  // Part 1: @([a-z0-9-]+\.)*(${rootsPattern})\.[a-z.]+$
-  // -> Matches @, followed by optional subdomains, then the blocked root (e.g. gmai), a dot, and ANY domain extension (.com, .fr, .co.uk)
-  // Part 2: @([a-z0-9-]+\.)*(${exactPattern})$
-  // -> Matches exact domains like mail.ru
-  const workEmailRegex = new RegExp(
-    `@([a-z0-9-]+\\.)*(${rootsPattern})\\.[a-z.]+$|@([a-z0-9-]+\\.)*(${exactPattern})$`,
-    'i'
-  );
+  // 2. and 3. (the blocked provider roots and the exact-domain list) now live at
+  // module level as personalEmailRegex, so this function and the Book a Demo gate
+  // share one source of truth. Behaviour here is unchanged - same list, same regex.
+  const workEmailRegex = personalEmailRegex;
 
   // 4. Loop through each form and apply the validation logic
   forms.forEach(form => {
@@ -359,6 +376,78 @@ function validateEmails() {
 
     // Keep checking as the user types
     emailInput.addEventListener('input', checkEmail);
+  });
+}
+
+function gateBookDemoOnWorkEmail() {
+  // Gates ONLY the "Book a Demo" button on forms that also offer the free trial
+  // (the inline forms). Those forms deliberately accept personal emails, because
+  // engineers often try the app on a throwaway address first - but a personal
+  // address clicking Book a Demo currently submits successfully, pings Vadim, and
+  // then dead-ends on /demo where the address is rejected. This stops that at the
+  // point of submission instead.
+  //
+  // Scope is detected structurally rather than via a new attribute: the ticket
+  // defines the target as "forms with Book Demo and Sign Up as CTA buttons", and
+  // only the inline forms carry a redirect-to-book-a-demo submit button. The
+  // Demo Request forms keep validateEmails() untouched and still block personal
+  // emails outright.
+  const forms = document.querySelectorAll(formSelector);
+  if (!forms.length) return;
+
+  forms.forEach(wrapper => {
+    // Leave anything already handled by validateEmails() alone
+    if (wrapper.matches('[data-js~="email-validate-form"]')) {
+      return;
+    }
+
+    const form = wrapper.querySelector('form');
+    const demoButton = wrapper.querySelector(bookDemoButtonSelector);
+    const emailInput = wrapper.querySelector('[data-js~="custom-validate"]');
+    const emailError = wrapper.querySelector(emailErrorSelector);
+
+    // No demo button means this form is out of scope
+    if (!form || !demoButton || !emailInput) {
+      return;
+    }
+
+    function hideEmailError() {
+      if (emailError) emailError.classList.remove(emailErrorActiveClass);
+    }
+
+    function showEmailError() {
+      if (emailError) emailError.classList.add(emailErrorActiveClass);
+    }
+
+    // Clear the message as soon as they start correcting the address
+    emailInput.addEventListener('input', hideEmailError);
+
+    form.addEventListener('submit', function(e) {
+      // e.submitter is the button that triggered submission, and it is populated
+      // for Enter-key submits too - those resolve to the form's first submit
+      // button, which is Book a Demo. Binding to the button's click instead would
+      // miss that entirely and leave the gate trivially bypassable.
+      const submitter = e.submitter || activeSubmitButton;
+
+      // Anything other than Book a Demo passes straight through. "Try Sibe for
+      // free" must keep accepting personal addresses.
+      if (submitter !== demoButton) {
+        hideEmailError();
+        return;
+      }
+
+      // The input is type="email" required, so the browser has already enforced
+      // format and non-emptiness before this event fires at all.
+      if (personalEmailRegex.test(emailInput.value.trim())) {
+        e.preventDefault();
+        // Capture phase + stopImmediatePropagation keeps the event away from
+        // Webflow's own submit handler, which would otherwise still AJAX it
+        // through - preventDefault alone does not stop propagation.
+        e.stopImmediatePropagation();
+        showEmailError();
+        emailInput.focus();
+      }
+    }, true); // capture, so we run before Webflow
   });
 }
 
@@ -423,6 +512,11 @@ appendUtmToLinks();
 
 //Form email validation
 validateEmails();
+
+//Work-email gate on the Book a Demo button only (inline forms)
+//Runs BEFORE handleButtonAnalytics so a blocked submit never reaches its
+//listener and cannot write analytics fields for a submission that never happened
+gateBookDemoOnWorkEmail();
 
 //Checking which btn was clicked
 handleButtonAnalytics();
