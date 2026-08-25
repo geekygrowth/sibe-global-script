@@ -133,6 +133,11 @@ const personalEmailRegex = new RegExp(
 );
 
 // Book a Demo gate selectors
+// Opt-in only: a form gets this behaviour when it carries
+// data-js="book-demo-email-gate", so a newly built form never inherits it by
+// accident. Put it on the same element that holds data-type="form-component"
+// (the attribute is also accepted directly on the <form>).
+const bookDemoGateSelector = '[data-js~="book-demo-email-gate"]';
 const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
 const emailErrorSelector = '[data-js="email-error"]';
 const emailErrorActiveClass = 'cc-active';
@@ -387,26 +392,22 @@ function gateBookDemoOnWorkEmail() {
   // then dead-ends on /demo where the address is rejected. This stops that at the
   // point of submission instead.
   //
-  // Scope is detected structurally rather than via a new attribute: the ticket
-  // defines the target as "forms with Book Demo and Sign Up as CTA buttons", and
-  // only the inline forms carry a redirect-to-book-a-demo submit button. The
-  // Demo Request forms keep validateEmails() untouched and still block personal
-  // emails outright.
-  const forms = document.querySelectorAll(formSelector);
+  // Opt-in only, via data-js="book-demo-email-gate". Nothing is inferred from a
+  // form's structure, so a form built later gets this behaviour only if someone
+  // deliberately tags it. The Demo Request forms are untouched and keep
+  // validateEmails(), which still blocks personal emails outright.
+  const forms = document.querySelectorAll(bookDemoGateSelector);
   if (!forms.length) return;
 
   forms.forEach(wrapper => {
-    // Leave anything already handled by validateEmails() alone
-    if (wrapper.matches('[data-js~="email-validate-form"]')) {
-      return;
-    }
-
-    const form = wrapper.querySelector('form');
+    // Accept the attribute either on a wrapper or directly on the form element
+    const form = wrapper.matches('form') ? wrapper : wrapper.querySelector('form');
     const demoButton = wrapper.querySelector(bookDemoButtonSelector);
-    const emailInput = wrapper.querySelector('[data-js~="custom-validate"]');
+    const emailInput = wrapper.querySelector(emailInputSelector)
+      || wrapper.querySelector('[data-js~="custom-validate"]');
     const emailError = wrapper.querySelector(emailErrorSelector);
 
-    // No demo button means this form is out of scope
+    // A tagged form with no Book a Demo button has nothing to gate
     if (!form || !demoButton || !emailInput) {
       return;
     }
