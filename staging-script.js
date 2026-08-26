@@ -313,6 +313,23 @@ function appendUtmToLinks() {
   });
 }
 
+function toggleEmailError(scope, shouldShow) {
+// This function shows or hides the personal-email message inside one form.
+// It is the single place that knows WHERE the message lives and WHICH class
+// reveals it, so the two callers below only decide WHEN to show it:
+//   validateEmails()          - demo forms, checked as the user types
+//   gateBookDemoOnWorkEmail() - inline forms, checked only on Book a Demo
+// Returns false when the form has no error element, so a caller can warn.
+  const emailError = scope ? scope.querySelector(emailErrorSelector) : null;
+
+  if (!emailError) {
+    return false;
+  }
+
+  emailError.classList.toggle(emailErrorActiveClass, shouldShow);
+  return true;
+}
+
 function validateEmails() {
   // 1. Select all form wrappers that need this validation
   const forms = document.querySelectorAll('[data-js="email-validate-form"]');
@@ -341,37 +358,25 @@ function validateEmails() {
 
     function checkEmail() {
       const email = emailInput.value.trim();
+      const isPersonal = Boolean(email) && workEmailRegex.test(email);
 
-      if (email && workEmailRegex.test(email)) {
-        emailError.classList.add('cc-active');
+      // Same toggle the Book a Demo gate uses - only the trigger differs
+      toggleEmailError(form, isPersonal);
 
-        submitButtons.forEach(button => {
-          button.disabled = true;
-          button.style.opacity = 0.5;
-          button.style.cursor = 'not-allowed';
-        });
+      // Demo forms additionally disable the buttons while the address is
+      // personal. Inline forms deliberately do NOT - their free-trial button
+      // must stay usable with a personal address.
+      submitButtons.forEach(button => {
+        button.disabled = isPersonal;
+        button.style.opacity = isPersonal ? 0.5 : 1;
+        button.style.cursor = isPersonal ? 'not-allowed' : 'pointer';
+      });
 
-        nextButtons.forEach(button => {
-          button.disabled = true;
-          button.style.opacity = 0.5;
-          button.style.cursor = 'not-allowed';
-        });
-
-      } else {
-        emailError.classList.remove('cc-active');
-
-        submitButtons.forEach(button => {
-          button.disabled = false;
-          button.style.opacity = 1;
-          button.style.cursor = 'pointer';
-        });
-
-        nextButtons.forEach(button => {
-          button.disabled = false;
-          button.style.opacity = 1;
-          button.style.cursor = 'pointer';
-        });
-      }
+      nextButtons.forEach(button => {
+        button.disabled = isPersonal;
+        button.style.opacity = isPersonal ? 0.5 : 1;
+        button.style.cursor = isPersonal ? 'not-allowed' : 'pointer';
+      });
     }
 
 // Run after the full page load — this runs strictly after DOMContentLoaded,
@@ -412,16 +417,17 @@ function gateBookDemoOnWorkEmail() {
       return;
     }
 
-    function hideEmailError() {
-      if (emailError) emailError.classList.remove(emailErrorActiveClass);
-    }
-
-    function showEmailError() {
-      if (emailError) emailError.classList.add(emailErrorActiveClass);
+    // Blocking a submit with no visible explanation is the worst outcome here -
+    // the user clicks and nothing happens. Say so loudly at setup rather than
+    // leaving it to be discovered in production.
+    if (!emailError) {
+      console.warn('[sibe] book-demo-email-gate: no ' + emailErrorSelector + ' inside this form. Submissions will be blocked with no message shown.', wrapper);
     }
 
     // Clear the message as soon as they start correcting the address
-    emailInput.addEventListener('input', hideEmailError);
+    emailInput.addEventListener('input', function() {
+      toggleEmailError(wrapper, false);
+    });
 
     form.addEventListener('submit', function(e) {
       // e.submitter is the button that triggered submission, and it is populated
@@ -433,7 +439,7 @@ function gateBookDemoOnWorkEmail() {
       // Anything other than Book a Demo passes straight through. "Try Sibe for
       // free" must keep accepting personal addresses.
       if (submitter !== demoButton) {
-        hideEmailError();
+        toggleEmailError(wrapper, false);
         return;
       }
 
@@ -445,7 +451,7 @@ function gateBookDemoOnWorkEmail() {
         // Webflow's own submit handler, which would otherwise still AJAX it
         // through - preventDefault alone does not stop propagation.
         e.stopImmediatePropagation();
-        showEmailError();
+        toggleEmailError(wrapper, true);
         emailInput.focus();
       }
     }, true); // capture, so we run before Webflow
