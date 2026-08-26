@@ -141,6 +141,10 @@ const bookDemoGateSelector = '[data-js~="book-demo-email-gate"]';
 const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
 const emailErrorSelector = '[data-js="email-error"]';
 const emailErrorActiveClass = 'cc-active';
+// Shake animation on the email field itself. Only used where the check runs on
+// a click - never on the demo form, which re-checks on every keystroke and
+// would judder continuously while someone types a personal address.
+const emailTremorClass = 'cc-tremor';
 
 
 
@@ -313,14 +317,32 @@ function appendUtmToLinks() {
   });
 }
 
-function toggleEmailError(scope, shouldShow) {
+function toggleEmailError(scope, shouldShow, withTremor) {
 // This function shows or hides the personal-email message inside one form.
-// It is the single place that knows WHERE the message lives and WHICH class
-// reveals it, so the two callers below only decide WHEN to show it:
+// It is the single place that knows WHERE the message lives and WHICH classes
+// reveal it, so the two callers below only decide WHEN to show it:
 //   validateEmails()          - demo forms, checked as the user types
 //   gateBookDemoOnWorkEmail() - inline forms, checked only on Book a Demo
+// Pass withTremor to also shake the email field. Opt-in rather than automatic,
+// because validateEmails() calls this on every keystroke and a shake there
+// would judder the field continuously while someone types.
 // Returns false when the form has no error element, so a caller can warn.
   const emailError = scope ? scope.querySelector(emailErrorSelector) : null;
+  const emailInput = scope ? scope.querySelector(emailInputSelector) : null;
+
+  if (emailInput) {
+    // Always strip the class first. A CSS animation only runs when the class
+    // is newly applied, so re-adding it to an element that already has it does
+    // nothing - a second rejected click on an unchanged address would show no
+    // shake at all. Reading offsetWidth forces the browser to flush the removal
+    // before the re-add, which restarts the animation.
+    emailInput.classList.remove(emailTremorClass);
+
+    if (shouldShow && withTremor) {
+      void emailInput.offsetWidth;
+      emailInput.classList.add(emailTremorClass);
+    }
+  }
 
   if (!emailError) {
     return false;
@@ -451,7 +473,9 @@ function gateBookDemoOnWorkEmail() {
         // Webflow's own submit handler, which would otherwise still AJAX it
         // through - preventDefault alone does not stop propagation.
         e.stopImmediatePropagation();
-        toggleEmailError(wrapper, true);
+        // withTremor: this rejection came from a deliberate click, so shake the
+        // field. Re-shakes on every repeat click, even with the same address.
+        toggleEmailError(wrapper, true, true);
         emailInput.focus();
       }
     }, true); // capture, so we run before Webflow
