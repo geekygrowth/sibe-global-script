@@ -32,7 +32,7 @@ Webflow → Site Settings → Custom Code → **Footer**:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@26.0.1/build/js/intlTelInput.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.2.0/global-script.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.3.0/global-script.js"></script>
 ```
 
 And in **Head**:
@@ -66,7 +66,7 @@ git add global-script.js
 git commit -m "describe the change"
 
 # 3. tag - bump MINOR for new behaviour, PATCH for a fix
-git tag v1.2.0
+git tag v1.3.0
 
 # 4. push both the branch and the tag (the tag is what jsDelivr resolves)
 git push && git push --tags

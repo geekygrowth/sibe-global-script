@@ -65,7 +65,10 @@ const ltInitialReferrerKey = 'lt-initialReferrer';
 // 3. TOUCH AGNOSTIC
 // ==========================================
 const formSelector = '[data-type="form-component"]';
-const emailInputSelector = '[data-type="email-input"]';
+// The email field is identified by data-js="custom-validate" only. That
+// attribute means "this field gets email validation", which is exactly the
+// precondition for the gate and the shake - so one marker, not two.
+const emailFieldSelector = '[data-js~="custom-validate"]';
 const nameInputSelector = '[data-type="name-input"]';
 const phoneInputSelector = '[data-type="phone-input"]';
 const titleInputSelector = '[data-type="title-input"]';
@@ -90,6 +93,62 @@ const fbpInputSelector = '[data-type="fbp-input"]';
 const ltFbcInputSelector = '[data-type="lt-fbc-input"]';
 // localStorage key for the manually-built _fbc fallback
 const fbcFallbackKey = 'lt-fbc-fallback';
+
+// ==========================================
+// 5. PERSONAL-EMAIL DETECTION (shared)
+// ==========================================
+// Moved up here from inside validateEmails() so that function and the Book a
+// Demo gate below share one list. Kept as two separate copies they would drift
+// apart the first time someone adds a domain to only one of them.
+
+// 2. Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
+// Added common typos based on your client's request
+const blockedRoots = [
+  'gmail', 'gmai', 'googlemail', 'jmail',
+  'outlook', 'hotmail', 'live', 'msn',
+  'icloud', 'iclouud', 'me',
+  'yahoo', 'ymail',
+  'mg',
+  'qq', 'aol', 'cox', 'comcast',
+  'yandex', 'gmx', 'onmicrosoft'
+  // Add any other root words or common typos here
+];
+
+// 3. Define exact domains (for domains that are too risky to use as a root word)
+// E.g., If we blocked the root word "mail", it would accidentally block valid
+// corporate emails like "user@mail.companyllc.com".
+const exactDomains = [
+  'mail.ru', 'gmailcom'
+];
+
+// Build the regular expression strings
+const rootsPattern = blockedRoots.join('|');
+const exactPattern = exactDomains.map(d => d.replace(/\./g, '\\.')).join('|');
+
+// The New Regular Expression Breakdown:
+// Part 1: @([a-z0-9-]+\.)*(${rootsPattern})\.[a-z.]+$
+// -> Matches @, followed by optional subdomains, then the blocked root (e.g. gmai), a dot, and ANY domain extension (.com, .fr, .co.uk)
+// Part 2: @([a-z0-9-]+\.)*(${exactPattern})$
+// -> Matches exact domains like mail.ru
+const personalEmailRegex = new RegExp(
+  `@([a-z0-9-]+\\.)*(${rootsPattern})\\.[a-z.]+$|@([a-z0-9-]+\\.)*(${exactPattern})$`,
+  'i'
+);
+
+// Book a Demo gate selectors
+// Opt-in only: a form gets this behaviour when it carries
+// data-js="book-demo-email-gate", so a newly built form never inherits it by
+// accident. Put it on the same element that holds data-type="form-component"
+// (the attribute is also accepted directly on the <form>).
+const bookDemoGateSelector = '[data-js~="book-demo-email-gate"]';
+const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
+const emailErrorSelector = '[data-js="email-error"]';
+const emailErrorActiveClass = 'cc-active';
+// Shake animation on the email field itself. Fires when the error message
+// APPEARS - so the demo form shakes once on the keystroke that turns the
+// address personal, not on every keystroke after it. A rejected submit shakes
+// regardless, so repeat clicks on an unchanged address still get feedback.
+const emailTremorClass = 'cc-tremor';
 
 
 
@@ -262,6 +321,51 @@ function appendUtmToLinks() {
   });
 }
 
+function toggleEmailError(scope, shouldShow, withTremor) {
+// This function shows or hides the personal-email message inside one form.
+// It is the single place that knows WHERE the message lives and WHICH classes
+// reveal it, so the two callers below only decide WHEN to show it:
+//   validateEmails()          - demo forms, checked as the user types
+//   gateBookDemoOnWorkEmail() - inline forms, checked only on Book a Demo
+// Pass withTremor to also shake the email field. Opt-in rather than automatic,
+// because validateEmails() calls this on every keystroke and a shake there
+// would judder the field continuously while someone types.
+// Returns false when the form has no error element, so a caller can warn.
+  const emailError = scope ? scope.querySelector(emailErrorSelector) : null;
+  const emailInput = scope ? scope.querySelector(emailFieldSelector) : null;
+
+  // Was the message already on screen before this call?
+  const wasShowing = Boolean(emailError) && emailError.classList.contains(emailErrorActiveClass);
+
+  // Shake when the message APPEARS, not on every call that merely keeps it
+  // showing. That is what stops the demo form juddering on each keystroke while
+  // the address stays personal - the first keystroke that turns it personal
+  // shakes, the rest do not. withTremor forces one regardless, so a repeat
+  // rejected click still shakes even though the message never went away.
+  const shouldTremor = shouldShow && (withTremor || !wasShowing);
+
+  if (emailInput) {
+    // Always strip the class first. A CSS animation only runs when the class
+    // is newly applied, so re-adding it to an element that already has it does
+    // nothing - a second rejected click on an unchanged address would show no
+    // shake at all. Reading offsetWidth forces the browser to flush the removal
+    // before the re-add, which restarts the animation.
+    emailInput.classList.remove(emailTremorClass);
+
+    if (shouldTremor) {
+      void emailInput.offsetWidth;
+      emailInput.classList.add(emailTremorClass);
+    }
+  }
+
+  if (!emailError) {
+    return false;
+  }
+
+  emailError.classList.toggle(emailErrorActiveClass, shouldShow);
+  return true;
+}
+
 function validateEmails() {
   // 1. Select all form wrappers that need this validation
   const forms = document.querySelectorAll('[data-js="email-validate-form"]');
@@ -270,45 +374,16 @@ function validateEmails() {
     return;
   }
 
-  // 2. Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
-  // Added common typos based on your client's request
-  const blockedRoots = [
-    'gmail', 'gmai', 'googlemail', 'jmail',
-    'outlook', 'hotmail', 'live', 'msn',
-    'icloud', 'iclouud', 'me',
-    'yahoo', 'ymail',
-    'mg',
-    'qq', 'aol', 'cox', 'comcast',
-    'yandex', 'gmx', 'onmicrosoft'
-    // Add any other root words or common typos here
-  ];
-
-  // 3. Define exact domains (for domains that are too risky to use as a root word)
-  // E.g., If we blocked the root word "mail", it would accidentally block valid
-  // corporate emails like "user@mail.companyllc.com".
-  const exactDomains = [
-    'mail.ru', 'gmailcom'
-  ];
-
-  // Build the regular expression strings
-  const rootsPattern = blockedRoots.join('|');
-  const exactPattern = exactDomains.map(d => d.replace(/\./g, '\\.')).join('|');
-
-  // The New Regular Expression Breakdown:
-  // Part 1: @([a-z0-9-]+\.)*(${rootsPattern})\.[a-z.]+$
-  // -> Matches @, followed by optional subdomains, then the blocked root (e.g. gmai), a dot, and ANY domain extension (.com, .fr, .co.uk)
-  // Part 2: @([a-z0-9-]+\.)*(${exactPattern})$
-  // -> Matches exact domains like mail.ru
-  const workEmailRegex = new RegExp(
-    `@([a-z0-9-]+\\.)*(${rootsPattern})\\.[a-z.]+$|@([a-z0-9-]+\\.)*(${exactPattern})$`,
-    'i'
-  );
+  // 2. and 3. (the blocked provider roots and the exact-domain list) now live at
+  // module level as personalEmailRegex, so this function and the Book a Demo gate
+  // share one source of truth. Behaviour here is unchanged - same list, same regex.
+  const workEmailRegex = personalEmailRegex;
 
   // 4. Loop through each form and apply the validation logic
   forms.forEach(form => {
     // Find the necessary elements *inside* the current form
-    const emailInput = form.querySelector('[data-js~="custom-validate"]');
-    const emailError = form.querySelector('[data-js="email-error"]');
+    const emailInput = form.querySelector(emailFieldSelector);
+    const emailError = form.querySelector(emailErrorSelector);
     const submitButtons = form.querySelectorAll('[type="submit"]');
     const nextButtons = form.querySelectorAll('[data-form-nav="next"]');
 
@@ -317,48 +392,131 @@ function validateEmails() {
       return;
     }
 
-    function checkEmail() {
+    // withTremor is passed explicitly by each caller below. Never wire this
+    // straight to addEventListener - the Event object would arrive as the first
+    // argument and read as truthy, shaking the field on every keystroke.
+    function checkEmail(withTremor) {
       const email = emailInput.value.trim();
+      const isPersonal = Boolean(email) && workEmailRegex.test(email);
 
-      if (email && workEmailRegex.test(email)) {
-        emailError.classList.add('cc-active');
+      // Same toggle the Book a Demo gate uses - only the trigger differs
+      toggleEmailError(form, isPersonal, withTremor);
 
-        submitButtons.forEach(button => {
-          button.disabled = true;
-          button.style.opacity = 0.5;
-          button.style.cursor = 'not-allowed';
-        });
+      // Demo forms additionally disable the buttons while the address is
+      // personal. Inline forms deliberately do NOT - their free-trial button
+      // must stay usable with a personal address.
+      submitButtons.forEach(button => {
+        button.disabled = isPersonal;
+        button.style.opacity = isPersonal ? 0.5 : 1;
+        button.style.cursor = isPersonal ? 'not-allowed' : 'pointer';
+      });
 
-        nextButtons.forEach(button => {
-          button.disabled = true;
-          button.style.opacity = 0.5;
-          button.style.cursor = 'not-allowed';
-        });
-
-      } else {
-        emailError.classList.remove('cc-active');
-
-        submitButtons.forEach(button => {
-          button.disabled = false;
-          button.style.opacity = 1;
-          button.style.cursor = 'pointer';
-        });
-
-        nextButtons.forEach(button => {
-          button.disabled = false;
-          button.style.opacity = 1;
-          button.style.cursor = 'pointer';
-        });
-      }
+      nextButtons.forEach(button => {
+        button.disabled = isPersonal;
+        button.style.opacity = isPersonal ? 0.5 : 1;
+        button.style.cursor = isPersonal ? 'not-allowed' : 'pointer';
+      });
     }
+
+    // Enforcement, separate from the presentation above.
+    // Disabling the buttons only holds while checkEmail has actually run, and
+    // it runs on 'input' and on load. A password manager, browser autofill or
+    // any script that sets .value directly fires no 'input' event - the buttons
+    // stay enabled over a personal address and the form submits normally.
+    // Blocking at submit closes that, and matches how the inline form's Book a
+    // Demo gate works. Capture phase on the wrapper runs before Webflow's own
+    // handler on the form; preventDefault alone would not stop it.
+    form.addEventListener('submit', function(e) {
+      if (workEmailRegex.test(emailInput.value.trim())) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        // Shake: this rejection came from a deliberate submit, not from typing
+        checkEmail(true);
+        emailInput.focus();
+      }
+    }, true);
 
 // Run after the full page load — this runs strictly after DOMContentLoaded,
     // guaranteeing any prefill scripts (like the /demo page's URL-param prefill)
     // have already populated the field before we validate it
-    window.addEventListener('load', checkEmail);
+    window.addEventListener('load', function() {
+      checkEmail(false);
+    });
 
     // Keep checking as the user types
-    emailInput.addEventListener('input', checkEmail);
+    emailInput.addEventListener('input', function() {
+      checkEmail(false);
+    });
+  });
+}
+
+function gateBookDemoOnWorkEmail() {
+  // Gates ONLY the "Book a Demo" button on forms that also offer the free trial
+  // (the inline forms). Those forms deliberately accept personal emails, because
+  // engineers often try the app on a throwaway address first - but a personal
+  // address clicking Book a Demo currently submits successfully, pings Vadim, and
+  // then dead-ends on /demo where the address is rejected. This stops that at the
+  // point of submission instead.
+  //
+  // Opt-in only, via data-js="book-demo-email-gate". Nothing is inferred from a
+  // form's structure, so a form built later gets this behaviour only if someone
+  // deliberately tags it. The Demo Request forms are untouched and keep
+  // validateEmails(), which still blocks personal emails outright.
+  const forms = document.querySelectorAll(bookDemoGateSelector);
+  if (!forms.length) return;
+
+  forms.forEach(wrapper => {
+    // Accept the attribute either on a wrapper or directly on the form element
+    const form = wrapper.matches('form') ? wrapper : wrapper.querySelector('form');
+    const demoButton = wrapper.querySelector(bookDemoButtonSelector);
+    const emailInput = wrapper.querySelector(emailFieldSelector);
+    const emailError = wrapper.querySelector(emailErrorSelector);
+
+    // A tagged form with no Book a Demo button has nothing to gate
+    if (!form || !demoButton || !emailInput) {
+      return;
+    }
+
+    // Blocking a submit with no visible explanation is the worst outcome here -
+    // the user clicks and nothing happens. Say so loudly at setup rather than
+    // leaving it to be discovered in production.
+    if (!emailError) {
+      console.warn('[sibe] book-demo-email-gate: no ' + emailErrorSelector + ' inside this form. Submissions will be blocked with no message shown.', wrapper);
+    }
+
+    // Clear the message as soon as they start correcting the address
+    emailInput.addEventListener('input', function() {
+      toggleEmailError(wrapper, false);
+    });
+
+    form.addEventListener('submit', function(e) {
+      // e.submitter is the button that triggered submission, and it is populated
+      // for Enter-key submits too - those resolve to the form's first submit
+      // button, which is Book a Demo. Binding to the button's click instead would
+      // miss that entirely and leave the gate trivially bypassable.
+      const submitter = e.submitter || activeSubmitButton;
+
+      // Anything other than Book a Demo passes straight through. "Try Sibe for
+      // free" must keep accepting personal addresses.
+      if (submitter !== demoButton) {
+        toggleEmailError(wrapper, false);
+        return;
+      }
+
+      // The input is type="email" required, so the browser has already enforced
+      // format and non-emptiness before this event fires at all.
+      if (personalEmailRegex.test(emailInput.value.trim())) {
+        e.preventDefault();
+        // Capture phase + stopImmediatePropagation keeps the event away from
+        // Webflow's own submit handler, which would otherwise still AJAX it
+        // through - preventDefault alone does not stop propagation.
+        e.stopImmediatePropagation();
+        // withTremor: this rejection came from a deliberate click, so shake the
+        // field. Re-shakes on every repeat click, even with the same address.
+        toggleEmailError(wrapper, true, true);
+        emailInput.focus();
+      }
+    }, true); // capture, so we run before Webflow
   });
 }
 
@@ -423,6 +581,11 @@ appendUtmToLinks();
 
 //Form email validation
 validateEmails();
+
+//Work-email gate on the Book a Demo button only (inline forms)
+//Runs BEFORE handleButtonAnalytics so a blocked submit never reaches its
+//listener and cannot write analytics fields for a submission that never happened
+gateBookDemoOnWorkEmail();
 
 //Checking which btn was clicked
 handleButtonAnalytics();
