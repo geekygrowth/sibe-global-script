@@ -65,7 +65,10 @@ const ltInitialReferrerKey = 'lt-initialReferrer';
 // 3. TOUCH AGNOSTIC
 // ==========================================
 const formSelector = '[data-type="form-component"]';
-const emailInputSelector = '[data-type="email-input"]';
+// The email field is identified by data-js="custom-validate" only. That
+// attribute means "this field gets email validation", which is exactly the
+// precondition for the gate and the shake - so one marker, not two.
+const emailFieldSelector = '[data-js~="custom-validate"]';
 const nameInputSelector = '[data-type="name-input"]';
 const phoneInputSelector = '[data-type="phone-input"]';
 const titleInputSelector = '[data-type="title-input"]';
@@ -328,7 +331,7 @@ function toggleEmailError(scope, shouldShow, withTremor) {
 // would judder the field continuously while someone types.
 // Returns false when the form has no error element, so a caller can warn.
   const emailError = scope ? scope.querySelector(emailErrorSelector) : null;
-  const emailInput = scope ? scope.querySelector(emailInputSelector) : null;
+  const emailInput = scope ? scope.querySelector(emailFieldSelector) : null;
 
   if (emailInput) {
     // Always strip the class first. A CSS animation only runs when the class
@@ -368,8 +371,8 @@ function validateEmails() {
   // 4. Loop through each form and apply the validation logic
   forms.forEach(form => {
     // Find the necessary elements *inside* the current form
-    const emailInput = form.querySelector('[data-js~="custom-validate"]');
-    const emailError = form.querySelector('[data-js="email-error"]');
+    const emailInput = form.querySelector(emailFieldSelector);
+    const emailError = form.querySelector(emailErrorSelector);
     const submitButtons = form.querySelectorAll('[type="submit"]');
     const nextButtons = form.querySelectorAll('[data-form-nav="next"]');
 
@@ -401,6 +404,23 @@ function validateEmails() {
       });
     }
 
+    // Enforcement, separate from the presentation above.
+    // Disabling the buttons only holds while checkEmail has actually run, and
+    // it runs on 'input' and on load. A password manager, browser autofill or
+    // any script that sets .value directly fires no 'input' event - the buttons
+    // stay enabled over a personal address and the form submits normally.
+    // Blocking at submit closes that, and matches how the inline form's Book a
+    // Demo gate works. Capture phase on the wrapper runs before Webflow's own
+    // handler on the form; preventDefault alone would not stop it.
+    form.addEventListener('submit', function(e) {
+      if (workEmailRegex.test(emailInput.value.trim())) {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        checkEmail();
+        emailInput.focus();
+      }
+    }, true);
+
 // Run after the full page load — this runs strictly after DOMContentLoaded,
     // guaranteeing any prefill scripts (like the /demo page's URL-param prefill)
     // have already populated the field before we validate it
@@ -430,8 +450,7 @@ function gateBookDemoOnWorkEmail() {
     // Accept the attribute either on a wrapper or directly on the form element
     const form = wrapper.matches('form') ? wrapper : wrapper.querySelector('form');
     const demoButton = wrapper.querySelector(bookDemoButtonSelector);
-    const emailInput = wrapper.querySelector(emailInputSelector)
-      || wrapper.querySelector('[data-js~="custom-validate"]');
+    const emailInput = wrapper.querySelector(emailFieldSelector);
     const emailError = wrapper.querySelector(emailErrorSelector);
 
     // A tagged form with no Book a Demo button has nothing to gate
