@@ -144,9 +144,9 @@ const bookDemoGateSelector = '[data-js~="book-demo-email-gate"]';
 const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
 const emailErrorSelector = '[data-js="email-error"]';
 const emailErrorActiveClass = 'cc-active';
-// Shake animation on the email field itself. Only used where the check runs on
-// a click - never on the demo form, which re-checks on every keystroke and
-// would judder continuously while someone types a personal address.
+// Shake animation on the email field itself. Requested per TRIGGER, not per
+// form: a submit is a deliberate action and should shake, whereas the demo
+// form's as-you-type check must not, or the field judders on every keystroke.
 const emailTremorClass = 'cc-tremor';
 
 
@@ -381,12 +381,15 @@ function validateEmails() {
       return;
     }
 
-    function checkEmail() {
+    // withTremor is passed explicitly by each caller below. Never wire this
+    // straight to addEventListener - the Event object would arrive as the first
+    // argument and read as truthy, shaking the field on every keystroke.
+    function checkEmail(withTremor) {
       const email = emailInput.value.trim();
       const isPersonal = Boolean(email) && workEmailRegex.test(email);
 
       // Same toggle the Book a Demo gate uses - only the trigger differs
-      toggleEmailError(form, isPersonal);
+      toggleEmailError(form, isPersonal, withTremor);
 
       // Demo forms additionally disable the buttons while the address is
       // personal. Inline forms deliberately do NOT - their free-trial button
@@ -416,7 +419,8 @@ function validateEmails() {
       if (workEmailRegex.test(emailInput.value.trim())) {
         e.preventDefault();
         e.stopImmediatePropagation();
-        checkEmail();
+        // Shake: this rejection came from a deliberate submit, not from typing
+        checkEmail(true);
         emailInput.focus();
       }
     }, true);
@@ -424,10 +428,14 @@ function validateEmails() {
 // Run after the full page load — this runs strictly after DOMContentLoaded,
     // guaranteeing any prefill scripts (like the /demo page's URL-param prefill)
     // have already populated the field before we validate it
-    window.addEventListener('load', checkEmail);
+    window.addEventListener('load', function() {
+      checkEmail(false);
+    });
 
     // Keep checking as the user types
-    emailInput.addEventListener('input', checkEmail);
+    emailInput.addEventListener('input', function() {
+      checkEmail(false);
+    });
   });
 }
 
