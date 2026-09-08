@@ -150,6 +150,32 @@ const emailErrorActiveClass = 'cc-active';
 // regardless, so repeat clicks on an unchanged address still get feedback.
 const emailTremorClass = 'cc-tremor';
 
+// ==========================================
+// 6. CAL WIDGET GATE (experiment)
+// ==========================================
+// Asana: "Experiment: Re-allow personal emails to request a demo, but NOT to
+// self-schedule via the Cal widget" (task 1218241045872002).
+// Personal emails may now submit a demo request again, but must not be offered
+// the self-scheduling calendar - those bookings never showed up to the call.
+// This flag picks between two whole behaviours in INIT: true runs
+// gateCalWidgetOnWorkEmail(), false runs the pre-experiment pair
+// validateEmails() + gateBookDemoOnWorkEmail(). Both paths stay in the file, so
+// nothing is commented out and nothing has to be rebuilt to go back.
+// The [data-js="email-error"] divs stay in the DOM throughout the experiment,
+// simply never activated, so the Webflow side needs no revert either.
+// Fastest rollback of all is pointing the Webflow footer URL at the previous
+// version - see README. Flipping this to false is the in-place alternative.
+const CAL_GATE_EXPERIMENT = true;
+
+// All four live in the Demo Request form component, so one Webflow edit covers
+// every instance of it. They are inert without this script.
+const calWidgetSelector = '[data-js="cal-widget"]';                      // the Cal.com Embed element
+const calSpacerSelector = '[data-js="cal-spacer"]';                      // the spacer above it
+const successCopyWorkSelector = '[data-js="success-copy-work"]';         // "...select a time slot below"
+const successCopyPersonalSelector = '[data-js="success-copy-personal"]'; // "...we'll get back to you"
+// Existing Webflow utility class - plain display:none, no !important
+const hiddenClass = 'u-d-none';
+
 
 
 //****************
@@ -520,6 +546,69 @@ function gateBookDemoOnWorkEmail() {
   });
 }
 
+function setCalGateHidden(el, hidden) {
+// Small helper so the four toggles below read as one idea. Silently ignores a
+// missing element: a form component that predates the Webflow edit simply has
+// nothing to hide, which is the correct no-op rather than a thrown error.
+  if (el) {
+    el.classList.toggle(hiddenClass, hidden);
+  }
+}
+
+function gateCalWidgetOnWorkEmail() {
+  // Shows the Cal self-scheduling widget only to work emails, and swaps the
+  // success copy to match. Personal emails still submit the form normally and
+  // still reach Customer Success - they just do not get the calendar.
+  //
+  // Hooked on submit in the CAPTURE phase rather than in the ajaxComplete block
+  // further down, so the state is set before Webflow ever reveals .w-form-done.
+  // That means no flash of a calendar that is about to be hidden, and no
+  // dependency on jQuery's callback ordering.
+  //
+  // Hiding is safe: .w-form-done is display:none until submit, so the Cal embed
+  // already initialises inside a hidden subtree today and sizes itself correctly
+  // when revealed. One more display:none changes nothing for it.
+  const forms = document.querySelectorAll(formSelector);
+  if (!forms.length) return;
+
+  forms.forEach(wrapper => {
+    // Accept the attribute either on a wrapper or directly on the form element
+    const form = wrapper.matches('form') ? wrapper : wrapper.querySelector('form');
+    const emailInput = wrapper.querySelector(emailFieldSelector);
+    const calWidget = wrapper.querySelector(calWidgetSelector);
+
+    // No calendar in this form's success state means there is nothing to gate.
+    // This is what scopes the behaviour to the Demo Request form without needing
+    // a separate opt-in attribute - the inline forms simply fall out here.
+    if (!form || !emailInput || !calWidget) {
+      return;
+    }
+
+    const calSpacer = wrapper.querySelector(calSpacerSelector);
+    const copyWork = wrapper.querySelector(successCopyWorkSelector);
+    const copyPersonal = wrapper.querySelector(successCopyPersonalSelector);
+
+    // Hiding the calendar without also hiding the spacer above it leaves a large
+    // empty gap at the bottom of the success box, and with no personal-email copy
+    // the screen still tells them to pick a slot from a calendar that is not there
+    if (!calSpacer || !copyPersonal) {
+      console.warn('[sibe] cal-widget gate: missing ' + calSpacerSelector + ' or ' + successCopyPersonalSelector + ' in this form. The success screen may show a stray gap or the wrong copy.', wrapper);
+    }
+
+    form.addEventListener('submit', function() {
+      const isPersonal = personalEmailRegex.test(emailInput.value.trim());
+
+      // Deliberately symmetric - a work email un-hides everything again. A form
+      // submitted twice (personal, then corrected to a work address) must end in
+      // the right state, not stay stuck on whatever the first attempt set.
+      setCalGateHidden(calWidget, isPersonal);
+      setCalGateHidden(calSpacer, isPersonal);
+      setCalGateHidden(copyWork, isPersonal);
+      setCalGateHidden(copyPersonal, !isPersonal);
+    }, true); // capture, so we run before Webflow reveals the success wrapper
+  });
+}
+
 function handleButtonAnalytics() {
   const forms = document.querySelectorAll(formSelector);
   if (!forms.length) return;
@@ -579,13 +668,23 @@ saveFbcFallback();
 populateHiddenFields();
 appendUtmToLinks();
 
-//Form email validation
-validateEmails();
-
-//Work-email gate on the Book a Demo button only (inline forms)
-//Runs BEFORE handleButtonAnalytics so a blocked submit never reaches its
-//listener and cannot write analytics fields for a submission that never happened
-gateBookDemoOnWorkEmail();
+//Work-email handling - the experiment swaps one whole approach for the other,
+//so exactly one of these two branches runs. Both run BEFORE handleButtonAnalytics
+//so a blocked submit never reaches its listener and cannot write analytics fields
+//for a submission that never happened.
+if (CAL_GATE_EXPERIMENT) {
+  //Personal emails may submit a demo request; only work emails are offered the
+  //self-scheduling calendar. The [data-js="email-error"] divs stay in the DOM
+  //throughout, simply never activated, so nothing in Webflow has to change back.
+  gateCalWidgetOnWorkEmail();
+} else {
+  //Pre-experiment behaviour: personal emails are blocked outright, on the Demo
+  //Request form and on the inline forms' Book a Demo button.
+  //Form email validation
+  validateEmails();
+  //Work-email gate on the Book a Demo button only (inline forms)
+  gateBookDemoOnWorkEmail();
+}
 
 //Checking which btn was clicked
 handleButtonAnalytics();
@@ -648,6 +747,11 @@ handleMetaCookieCapture();
               posthogProps[cleanKey] = parsedData[key];
             }
           }
+
+          // EXPERIMENT (Asana 1218241045872002): records whether this submission was
+          // offered the self-scheduling calendar, so show-rate and booking-rate can be
+          // segmented in PostHog. Remove along with the rest of the experiment.
+          posthogProps.calWidgetShown = !personalEmailRegex.test((posthogProps.email || '').trim());
 
           posthog.capture('webflowFormSubmission', posthogProps);
           console.log("✅ PostHog Event Fired!", posthogProps);
