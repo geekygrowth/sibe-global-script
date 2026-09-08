@@ -94,6 +94,41 @@ stay served forever, so this works instantly and needs no git operation.
 
 ---
 
+## Running an experiment
+
+Live experiment: **Cal widget gated on a work email**
+([Asana](https://app.asana.com/1/1208124042017557/project/1209883068130345/task/1218241045872002)).
+Personal emails may submit a demo request, but only work emails are offered the
+self-scheduling calendar.
+
+| | |
+|---|---|
+| Pre-experiment production version | **v1.3.0** |
+| Experiment shipped as | v1.4.0 |
+
+**To roll back**, put `v1.3.0` in the Webflow footer URL and publish. That is the
+whole revert — about thirty seconds, no git, instant on the CDN.
+
+The Webflow side needs no revert. The personal-email copy block stays hidden and
+the four `data-js` attributes go inert the moment the old script stops reading
+them, so the markup can sit there indefinitely.
+
+There is also an in-place switch: `CAL_GATE_EXPERIMENT` at the top of the script
+picks between two whole behaviours in INIT — `true` runs
+`gateCalWidgetOnWorkEmail()`, `false` runs the pre-experiment
+`validateEmails()` + `gateBookDemoOnWorkEmail()`. Neither path is commented out.
+Flipping it still means cutting a new version, so prefer the URL rollback unless
+you are changing something else anyway.
+
+**Publish the Webflow component edits before the script.** In the other order
+there is a window where personal emails can both submit *and* see the calendar,
+which is the one outcome the experiment exists to prevent.
+
+If the experiment wins, delete the losing branch, the two now-dead functions and
+the hidden Webflow block, and ship it as a normal version bump.
+
+---
+
 ## Staging: iterating without burning a version
 
 `staging-script.js` exists so work-in-progress can be tested on
@@ -164,6 +199,18 @@ Component groups, and what populates each:
 | Touch Agnostic fields | page title, slug, clicked button | submit |
 | Meta Pixel Cookies | `document.cookie` (`_fbp` / `_fbc`) | submit |
 
+The Demo Request form component carries four more attributes, used only by the
+Cal widget experiment. They live in the component, so one edit covers every
+instance of it (`/`, `/pricing`, `/demo`, `/sibe-vs-traditional-pdm`, and any
+CTA section built from it).
+
+| Attribute | On | Purpose |
+|---|---|---|
+| `data-js="success-copy-work"` | the success wrapper's rich text | current copy, shown to work emails |
+| `data-js="success-copy-personal"` | a second rich-text block, shipped with `u-d-none` | shown to personal emails instead |
+| `data-js="cal-spacer"` | the large spacer above the calendar | hidden with the calendar, or it leaves a gap |
+| `data-js="cal-widget"` | the Cal.com Embed element | the calendar itself |
+
 ---
 
 ## Behaviour worth knowing
@@ -185,6 +232,13 @@ Pixel, asynchronously, so they are read at submit time rather than page load.
 is `fb.1.<clickTime>.<fbclid>` and is overwritten by the Pixel on every ad click,
 making it inherently last-touch. When the cookie is missing but the URL carries
 an `fbclid`, the script builds Meta's documented fallback format itself.
+
+**Hiding the Cal widget is safe.** `.w-form-done` is `display:none` until a
+form succeeds, so the Cal embed already initialises inside a hidden subtree and
+sizes itself correctly when revealed. The gate adds one more `display:none` to
+something already hidden, which is why it does not need to rebuild the embed —
+and why the embed stays editable in Webflow. The gate runs on `submit` in the
+capture phase, before Webflow reveals the success wrapper, so there is no flash.
 
 **Attribution capture is not consent-gated.** URL parameters are read and stored
 in `localStorage` before any cookie-consent decision. The Meta cookie fields are
