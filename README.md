@@ -32,7 +32,7 @@ Webflow → Site Settings → Custom Code → **Footer**:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@26.0.1/build/js/intlTelInput.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.3.0/global-script.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.4.0/global-script.js"></script>
 ```
 
 And in **Head**:
@@ -65,8 +65,9 @@ node --check global-script.js
 git add global-script.js
 git commit -m "describe the change"
 
-# 3. tag - bump MINOR for new behaviour, PATCH for a fix
-git tag v1.3.0
+# 3. tag - bump MINOR for new behaviour, PATCH for a fix.
+#    Always a NEW version - never a tag that already exists (see CLAUDE.md)
+git tag vX.Y.Z
 
 # 4. push both the branch and the tag (the tag is what jsDelivr resolves)
 git push && git push --tags
@@ -194,7 +195,7 @@ staging and production will drift:
 cp staging-script.js global-script.js
 node --check global-script.js
 git add -A && git commit -m "describe the change"
-git tag v1.3.0
+git tag vX.Y.Z   # a new version, never an existing one
 git push && git push --tags
 ```
 
