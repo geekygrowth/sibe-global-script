@@ -139,8 +139,31 @@ from the branch rather than a tag, so the URL never changes:
 https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@main/staging-script.js
 ```
 
-Point the **staging** Webflow footer at that once and leave it. Production
-stays on a pinned `@vX.Y.Z` URL of `global-script.js` and is never affected.
+### Only one of them can be in the footer at a time
+
+Webflow has a **single site-wide footer**. There is no separate staging footer —
+publishing to `sibe.webflow.io` and publishing to the custom domains ship the
+same custom code. So the staging URL and the production URL cannot both sit
+there; you swap the one line.
+
+```
+# testing                 -> @main/staging-script.js
+# production              -> @vX.Y.Z/global-script.js
+```
+
+**Leaving both in place breaks silently.** The two files declare the same
+top-level `const`s, so whichever `<script>` comes second throws
+`SyntaxError: Identifier 'fieldMappings' has already been declared` and does not
+execute at all. Nothing visibly fails — you just end up testing the other file.
+This was the live state of the site on 2026-09-08, with the staging script
+second and therefore dead on both `sibe.webflow.io` and `www.sibe.io`.
+
+To check which one is actually running, open the console on the page and type a
+name that exists in only one of the two files.
+
+So the staging loop is: put the `@main` URL in the footer, **publish to the
+Webflow subdomain only** (custom domains unchecked), test, then put the tagged
+URL back before publishing to production.
 
 ### The loop
 
