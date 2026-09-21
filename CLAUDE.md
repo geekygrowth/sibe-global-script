@@ -49,6 +49,16 @@ After pushing a tag, confirm jsDelivr actually serves it — fetch the tagged UR
 and compare its SHA256 against `git show <tag>:global-script.js`. A pushed tag
 is not a deployed script.
 
+## Every tag updates the README
+
+Cutting a new version means bumping the version in the README's "How it's loaded"
+snippet in the same commit. Otherwise the documented install line drifts behind what
+production actually runs, and the next person pastes a stale version into Webflow.
+
+Only that one line tracks the current version. The versions under "Running an
+experiment" are **history** — which version an experiment shipped as, and which one to
+roll back to. Leave them alone.
+
 ## Docs-only commits do not need a tag
 
 jsDelivr only ever serves the tagged `global-script.js`. Editing README.md or
