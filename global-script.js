@@ -62,7 +62,26 @@ const ltInitialPathKey = 'lt-initialPath';
 const ltInitialReferrerKey = 'lt-initialReferrer';
 
 // ==========================================
-// 3. TOUCH AGNOSTIC
+// 3. SESSION-SCOPED
+// ==========================================
+// First-touch and last-touch can BOTH be empty on a perfectly real visit.
+// First-touch may be months old, and saveLastVisitValues() only overwrites when
+// the inbound URL carries a marketing param - which organic and direct traffic
+// never do. A visitor who first landed in March and arrives today from a Google
+// search submits a form where every source field is blank or stale, and sales
+// sees "no source" (Asana 1217862770491811).
+// These two close that hole: written unconditionally, once per browsing session.
+// sessionStorage rather than localStorage, so they describe THIS visit only.
+
+// input selectors
+const sessionReferrerInputSelector = '[data-type="session-referrer-input"]';
+const sessionInitialPathInputSelector = '[data-type="session-initial-path-input"]';
+// sessionStorage keys - note: sessionStorage, not localStorage
+const sessionInitialPathKey = 'session-initialPath';
+const sessionReferrerKey = 'session-referrer';
+
+// ==========================================
+// 4. TOUCH AGNOSTIC
 // ==========================================
 const formSelector = '[data-type="form-component"]';
 // The email field is identified by data-js="custom-validate" only. That
@@ -80,7 +99,7 @@ const phIntentInputSelector = '[data-type="ph-intent-input"]';
 let activeSubmitButton = null;
 
 // ==========================================
-// 4. META PIXEL COOKIES (_fbp / _fbc)
+// 5. META PIXEL COOKIES (_fbp / _fbc)
 // ==========================================
 // These two are NOT URL params - they are first-party cookies written by the
 // Meta Pixel, so they are read from document.cookie rather than urlParams,
@@ -95,7 +114,7 @@ const ltFbcInputSelector = '[data-type="lt-fbc-input"]';
 const fbcFallbackKey = 'lt-fbc-fallback';
 
 // ==========================================
-// 5. PERSONAL-EMAIL DETECTION (shared)
+// 6. PERSONAL-EMAIL DETECTION (shared)
 // ==========================================
 // Moved up here from inside validateEmails() so that function and the Book a
 // Demo gate below share one list. Kept as two separate copies they would drift
@@ -151,7 +170,7 @@ const emailErrorActiveClass = 'cc-active';
 const emailTremorClass = 'cc-tremor';
 
 // ==========================================
-// 6. CAL WIDGET GATE (experiment)
+// 7. CAL WIDGET GATE (experiment)
 // ==========================================
 // Asana: "Experiment: Re-allow personal emails to request a demo, but NOT to
 // self-schedule via the Cal widget" (task 1218241045872002).
@@ -237,6 +256,32 @@ function saveLastVisitValues() {
   }
 }
 
+function saveSessionValues() {
+  // ==========================================
+  // SESSION-SCOPED
+  // ==========================================
+  // Deliberately NOT gated on marketing params - that is the entire point.
+  // These record where the CURRENT visit started, so an organic or direct
+  // arrival still carries a source even when first-touch is stale and
+  // last-touch was never written.
+
+  // Write-once per session: the first page of this visit wins, and later
+  // navigation within the site cannot overwrite it.
+  if (sessionStorage.getItem(sessionInitialPathKey) === null) {
+    sessionStorage.setItem(sessionInitialPathKey, window.location.pathname);
+  }
+
+  // The referrer additionally skips internal traffic. A tab opened from another
+  // sibe.io tab starts a fresh sessionStorage with document.referrer set to our
+  // own domain - recording that would report sibe.io as the traffic source.
+  // Left unset instead, so the field stays empty rather than lying.
+  const isInternalTraffic = document.referrer.includes(window.location.hostname);
+
+  if (sessionStorage.getItem(sessionReferrerKey) === null && !isInternalTraffic) {
+    sessionStorage.setItem(sessionReferrerKey, document.referrer || 'direct');
+  }
+}
+
 function saveFbcFallback() {
   // Meta's _fbc cookie only exists once the Pixel has loaded AND ad consent
   // allows it, so it is usually absent on the landing pageview - exactly the
@@ -314,7 +359,16 @@ function populateHiddenFields() {
   updateInputValue(ltReferrerInputSelector, ltReferrer);
 
   // ==========================================
-  // 3. TOUCH-AGNOSTIC values
+  // 3. SESSION-SCOPED values
+  // ==========================================
+  const sessionPath = sessionStorage.getItem(sessionInitialPathKey);
+  updateInputValue(sessionInitialPathInputSelector, sessionPath);
+
+  const sessionReferrer = sessionStorage.getItem(sessionReferrerKey);
+  updateInputValue(sessionReferrerInputSelector, sessionReferrer);
+
+  // ==========================================
+  // 4. TOUCH-AGNOSTIC values
   // ==========================================
   const pageTitle = document.title;
   updateInputValue(titleInputSelector, pageTitle);
@@ -660,6 +714,9 @@ saveFirstVisitValues();
 
 //LAST TOUCH
 saveLastVisitValues();
+
+//SESSION SCOPED (no marketing-param gate - fires on every entry)
+saveSessionValues();
 
 //META PIXEL _fbc fallback (must run before any field population)
 saveFbcFallback();
