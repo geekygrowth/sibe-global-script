@@ -17,7 +17,8 @@ const fieldMappings = [
   { key: 'gclid',        selector: '[data-utm-id="gclid"]' },
   { key: 'msclkid',      selector: '[data-utm-id="msclkid"]' },
   { key: 'fbclid',       selector: '[data-utm-id="fbclid"]' },
-  { key: 'rdt_cid',      selector: '[data-utm-id="rdt_cid"]' }
+  { key: 'rdt_cid',      selector: '[data-utm-id="rdt_cid"]' },
+  { key: 'li_fat_id',    selector: '[data-utm-id="li_fat_id"]' }
 ];
 
 // input selectors
@@ -39,7 +40,8 @@ const ltFieldMappings = [
   { key: 'lt-gclid',        selector: '[data-utm-id="lt-gclid"]' },
   { key: 'lt-msclkid',      selector: '[data-utm-id="lt-msclkid"]' },
   { key: 'lt-fbclid',       selector: '[data-utm-id="lt-fbclid"]' },
-  { key: 'lt-rdt_cid',      selector: '[data-utm-id="lt-rdt_cid"]' }
+  { key: 'lt-rdt_cid',      selector: '[data-utm-id="lt-rdt_cid"]' },
+  { key: 'lt-li_fat_id',    selector: '[data-utm-id="lt-li_fat_id"]' }
 ];
 
 // Which URL params are allowed to TRIGGER a last-touch overwrite.

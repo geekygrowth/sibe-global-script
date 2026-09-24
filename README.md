@@ -32,7 +32,7 @@ Webflow → Site Settings → Custom Code → **Footer**:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/intl-tel-input@26.0.1/build/js/intlTelInput.min.js"></script>
-<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.5.0/global-script.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/geekygrowth/sibe-global-script@v1.6.0/global-script.js"></script>
 ```
 
 And in **Head**:
