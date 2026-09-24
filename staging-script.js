@@ -1,5 +1,3 @@
-//Last Updated: 2026-08-18 by Nicolask Rak @nicolasrak
-//
 //****************
 //GLOBAL VARIABLES
 //****************
@@ -44,16 +42,9 @@ const ltFieldMappings = [
   { key: 'lt-li_fat_id',    selector: '[data-utm-id="lt-li_fat_id"]' }
 ];
 
-// Which URL params are allowed to TRIGGER a last-touch overwrite.
-// fbclid is deliberately excluded: Facebook and Instagram append it to EVERY
-// outbound link (organic posts, comments, DMs), not only paid ads. If it could
-// trigger the overwrite below, an organic social click would wipe existing paid
-// attribution and rewrite every lt- value as an empty string.
-// fbclid is still CAPTURED whenever the overwrite fires - it is just not allowed
-// to fire it on its own. Pending Omer's A/B decision on the Asana ticket
-// "Meta Click ID collection"; switch this back to fieldMappings if he picks B.
-// gclid, msclkid and rdt_cid are NOT excluded: unlike fbclid, those are only
-// ever appended on a genuine paid ad click, so each is a real new last touch.
+// URL params which are allowed to trigger a last-touch overwrite.
+// fbclid is deliberately excluded as they append it to EVERY
+// outbound link, not only to paid ads.
 const ltTriggerMappings = fieldMappings.filter(mapping => mapping.key !== 'fbclid');
 
 // input selectors
@@ -66,15 +57,6 @@ const ltInitialReferrerKey = 'lt-initialReferrer';
 // ==========================================
 // 3. SESSION-SCOPED
 // ==========================================
-// First-touch and last-touch can BOTH be empty on a perfectly real visit.
-// First-touch may be months old, and saveLastVisitValues() only overwrites when
-// the inbound URL carries a marketing param - which organic and direct traffic
-// never do. A visitor who first landed in March and arrives today from a Google
-// search submits a form where every source field is blank or stale, and sales
-// sees "no source" (Asana 1217862770491811).
-// These two close that hole: written unconditionally, once per browsing session.
-// sessionStorage rather than localStorage, so they describe THIS visit only.
-
 // input selectors
 const sessionReferrerInputSelector = '[data-type="session-referrer-input"]';
 const sessionInitialPathInputSelector = '[data-type="session-initial-path-input"]';
@@ -86,9 +68,6 @@ const sessionReferrerKey = 'session-referrer';
 // 4. TOUCH AGNOSTIC
 // ==========================================
 const formSelector = '[data-type="form-component"]';
-// The email field is identified by data-js="custom-validate" only. That
-// attribute means "this field gets email validation", which is exactly the
-// precondition for the gate and the shake - so one marker, not two.
 const emailFieldSelector = '[data-js~="custom-validate"]';
 const nameInputSelector = '[data-type="name-input"]';
 const phoneInputSelector = '[data-type="phone-input"]';
@@ -106,10 +85,6 @@ let activeSubmitButton = null;
 // These two are NOT URL params - they are first-party cookies written by the
 // Meta Pixel, so they are read from document.cookie rather than urlParams,
 // and at SUBMIT time rather than page load (the Pixel writes them
-// asynchronously and is often slower than this script).
-//   _fbp = browser id, no touch semantics, so no lt- twin.
-//   _fbc = fb.1.<clickTime>.<fbclid>, overwritten by the Pixel on every new ad
-//          click, so it is inherently a LAST-touch value.
 const fbpInputSelector = '[data-type="fbp-input"]';
 const ltFbcInputSelector = '[data-type="lt-fbc-input"]';
 // localStorage key for the manually-built _fbc fallback
@@ -118,12 +93,7 @@ const fbcFallbackKey = 'lt-fbc-fallback';
 // ==========================================
 // 6. PERSONAL-EMAIL DETECTION (shared)
 // ==========================================
-// Moved up here from inside validateEmails() so that function and the Book a
-// Demo gate below share one list. Kept as two separate copies they would drift
-// apart the first time someone adds a domain to only one of them.
-
-// 2. Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
-// Added common typos based on your client's request
+// Define the core provider names to block (ignoring TLDs like .com, .fr, .it)
 const blockedRoots = [
   'gmail', 'gmai', 'googlemail', 'jmail',
   'outlook', 'hotmail', 'live', 'msn',
@@ -135,7 +105,7 @@ const blockedRoots = [
   // Add any other root words or common typos here
 ];
 
-// 3. Define exact domains (for domains that are too risky to use as a root word)
+// Define exact domains (for domains that are too risky to use as a root word)
 // E.g., If we blocked the root word "mail", it would accidentally block valid
 // corporate emails like "user@mail.companyllc.com".
 const exactDomains = [
@@ -146,46 +116,23 @@ const exactDomains = [
 const rootsPattern = blockedRoots.join('|');
 const exactPattern = exactDomains.map(d => d.replace(/\./g, '\\.')).join('|');
 
-// The New Regular Expression Breakdown:
-// Part 1: @([a-z0-9-]+\.)*(${rootsPattern})\.[a-z.]+$
-// -> Matches @, followed by optional subdomains, then the blocked root (e.g. gmai), a dot, and ANY domain extension (.com, .fr, .co.uk)
-// Part 2: @([a-z0-9-]+\.)*(${exactPattern})$
-// -> Matches exact domains like mail.ru
+// Nobody understands this regex exactly
 const personalEmailRegex = new RegExp(
   `@([a-z0-9-]+\\.)*(${rootsPattern})\\.[a-z.]+$|@([a-z0-9-]+\\.)*(${exactPattern})$`,
   'i'
 );
 
 // Book a Demo gate selectors
-// Opt-in only: a form gets this behaviour when it carries
-// data-js="book-demo-email-gate", so a newly built form never inherits it by
-// accident. Put it on the same element that holds data-type="form-component"
-// (the attribute is also accepted directly on the <form>).
+//legacy classes, currently unused
 const bookDemoGateSelector = '[data-js~="book-demo-email-gate"]';
 const bookDemoButtonSelector = '[data-js="redirect-to-book-a-demo"]';
 const emailErrorSelector = '[data-js="email-error"]';
 const emailErrorActiveClass = 'cc-active';
-// Shake animation on the email field itself. Fires when the error message
-// APPEARS - so the demo form shakes once on the keystroke that turns the
-// address personal, not on every keystroke after it. A rejected submit shakes
-// regardless, so repeat clicks on an unchanged address still get feedback.
 const emailTremorClass = 'cc-tremor';
 
 // ==========================================
 // 7. CAL WIDGET GATE (experiment)
 // ==========================================
-// Asana: "Experiment: Re-allow personal emails to request a demo, but NOT to
-// self-schedule via the Cal widget" (task 1218241045872002).
-// Personal emails may now submit a demo request again, but must not be offered
-// the self-scheduling calendar - those bookings never showed up to the call.
-// This flag picks between two whole behaviours in INIT: true runs
-// gateCalWidgetOnWorkEmail(), false runs the pre-experiment pair
-// validateEmails() + gateBookDemoOnWorkEmail(). Both paths stay in the file, so
-// nothing is commented out and nothing has to be rebuilt to go back.
-// The [data-js="email-error"] divs stay in the DOM throughout the experiment,
-// simply never activated, so the Webflow side needs no revert either.
-// Fastest rollback of all is pointing the Webflow footer URL at the previous
-// version - see README. Flipping this to false is the in-place alternative.
 const CAL_GATE_EXPERIMENT = true;
 
 // All four live in the Demo Request form component, so one Webflow edit covers
@@ -380,22 +327,36 @@ function populateHiddenFields() {
 }
 
 function appendUtmToLinks() {
-  // We're using the first touch attributes to append the links to the app
+  // We're appending all existing values to all outbound links
   const links = document.querySelectorAll('a[href*="app.sibe.io"]');
 
   if (!links.length) {
     return;
   }
 
+  const referrerParams = [
+    { key: initialReferrerKey,   storage: localStorage },
+    { key: ltInitialReferrerKey, storage: localStorage },
+    { key: sessionReferrerKey,   storage: sessionStorage }
+  ];
+
   links.forEach(link => {
     const url = new URL(link.href);
     const searchParams = url.searchParams;
 
     // Append UTM parameters from localStorage
-    fieldMappings.forEach(mapping => {
+    [...fieldMappings, ...ltFieldMappings].forEach(mapping => {
       const value = localStorage.getItem(mapping.key);
       if (value && !searchParams.has(mapping.key)) {
         searchParams.set(mapping.key, value);
+      }
+    });
+
+    // Needs new for loop bc not everything needs localStorage.getItem
+    referrerParams.forEach(param => {
+      const value = param.storage.getItem(param.key);
+      if (value && !searchParams.has(param.key)) {
+        searchParams.set(param.key, value);
       }
     });
 
@@ -717,7 +678,7 @@ saveFirstVisitValues();
 //LAST TOUCH
 saveLastVisitValues();
 
-//SESSION SCOPED (no marketing-param gate - fires on every entry)
+//SESSION SCOPED (fires on every entry)
 saveSessionValues();
 
 //META PIXEL _fbc fallback (must run before any field population)
@@ -727,28 +688,17 @@ saveFbcFallback();
 populateHiddenFields();
 appendUtmToLinks();
 
-//Work-email handling - the experiment swaps one whole approach for the other,
-//so exactly one of these two branches runs. Both run BEFORE handleButtonAnalytics
-//so a blocked submit never reaches its listener and cannot write analytics fields
-//for a submission that never happened.
 if (CAL_GATE_EXPERIMENT) {
-  //Personal emails may submit a demo request; only work emails are offered the
-  //self-scheduling calendar. The [data-js="email-error"] divs stay in the DOM
-  //throughout, simply never activated, so nothing in Webflow has to change back.
   gateCalWidgetOnWorkEmail();
 } else {
-  //Pre-experiment behaviour: personal emails are blocked outright, on the Demo
-  //Request form and on the inline forms' Book a Demo button.
-  //Form email validation
   validateEmails();
-  //Work-email gate on the Book a Demo button only (inline forms)
   gateBookDemoOnWorkEmail();
 }
 
 //Checking which btn was clicked
 handleButtonAnalytics();
 
-//Meta Pixel cookies (_fbp / _fbc) - read from document.cookie at submit time
+//Meta Pixel cookies (_fbp / _fbc)
 handleMetaCookieCapture();
 //
 
@@ -807,9 +757,6 @@ handleMetaCookieCapture();
             }
           }
 
-          // EXPERIMENT (Asana 1218241045872002): records whether this submission was
-          // offered the self-scheduling calendar, so show-rate and booking-rate can be
-          // segmented in PostHog. Remove along with the rest of the experiment.
           posthogProps.calWidgetShown = !personalEmailRegex.test((posthogProps.email || '').trim());
 
           posthog.capture('webflowFormSubmission', posthogProps);
@@ -828,13 +775,27 @@ handleMetaCookieCapture();
               if (nameValue) redirectUrl.searchParams.set('name', nameValue);
 
               if (typeof fieldMappings !== 'undefined') {
-                fieldMappings.forEach(mapping => {
+                [...fieldMappings, ...ltFieldMappings].forEach(mapping => {
                   const value = localStorage.getItem(mapping.key);
                   if (value && !redirectUrl.searchParams.has(mapping.key)) {
                     redirectUrl.searchParams.set(mapping.key, value);
                   }
                 });
               }
+
+              const referrerParams = [
+                { key: initialReferrerKey,   storage: localStorage },
+                { key: ltInitialReferrerKey, storage: localStorage },
+                { key: sessionReferrerKey,   storage: sessionStorage }
+              ];
+
+              referrerParams.forEach(param => {
+                const value = param.storage.getItem(param.key);
+                if (value && !redirectUrl.searchParams.has(param.key)) {
+                  redirectUrl.searchParams.set(param.key, value);
+                }
+              });
+
               window.location.href = redirectUrl.href;
             }, 300);
           }
