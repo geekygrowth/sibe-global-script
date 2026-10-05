@@ -144,6 +144,14 @@ const successCopyPersonalSelector = '[data-js="success-copy-personal"]'; // "...
 // Existing Webflow utility class - plain display:none, no !important
 const hiddenClass = 'u-d-none';
 
+// ==========================================
+// 8. LOCAL-LANGUAGE REP FIELD (LATAM)
+// ==========================================
+// Shown only when the phone field's selected country is one of these (ISO2,
+// as intl-tel-input reports it). Lives in demoForm only.
+const latamCountries = ['ar', 'bo', 'br', 'cl', 'co', 'cr', 'ec', 'mx', 'pa', 'py', 'pe', 'uy'];
+const localRepFieldSelector = '[data-js="local-rep-field"]'; // wrapper, shipped with u-d-none
+
 
 
 //****************
@@ -669,6 +677,50 @@ function handleMetaCookieCapture() {
   });
 }
 
+function handleLocalRepField() {
+  // Reveals the "local-language rep" checkbox only for LATAM phone countries.
+  // A form without the field (inlineForm, or demoForm after a rollback) simply
+  // falls out here, so deleting the field in Webflow is the whole revert.
+  document.querySelectorAll('input[ms-code-phone-number]').forEach(input => {
+    const form = input.closest('form');
+    const field = form && form.querySelector(localRepFieldSelector);
+    if (!field) return;
+
+    function sync() {
+      const iti = window.intlTelInput && window.intlTelInput.getInstance(input);
+      const iso2 = iti ? iti.getSelectedCountryData().iso2 : '';
+      const show = latamCountries.includes(iso2);
+
+      field.classList.toggle(hiddenClass, !show);
+
+      // Webflow submits hidden inputs too, so a "yes" ticked under Mexico must
+      // not survive a switch to another country. The custom checkbox visual is
+      // a separate div with its own checked class, so clear both.
+      if (!show) {
+        field.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
+        field.querySelectorAll('.w--redirected-checked').forEach(el => el.classList.remove('w--redirected-checked'));
+      }
+    }
+
+    // Visitor changing the flag by hand
+    input.addEventListener('countrychange', sync);
+
+    // The geo-IP guess resolves after load. The phone instance itself is created
+    // in a DOMContentLoaded listener registered AFTER this one, hence setTimeout
+    // 0 to run once it exists.
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        const iti = window.intlTelInput && window.intlTelInput.getInstance(input);
+        if (iti && iti.promise) {
+          iti.promise.then(sync, sync);
+        } else {
+          sync();
+        }
+      }, 0);
+    });
+  });
+}
+
 //****************
 //INIT
 //****************
@@ -700,6 +752,9 @@ handleButtonAnalytics();
 
 //Meta Pixel cookies (_fbp / _fbc)
 handleMetaCookieCapture();
+
+//LATAM local-language rep checkbox (demoForm only)
+handleLocalRepField();
 //
 
   document.addEventListener('DOMContentLoaded', function() {
