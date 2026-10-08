@@ -144,6 +144,25 @@ const successCopyPersonalSelector = '[data-js="success-copy-personal"]'; // "...
 // Existing Webflow utility class - plain display:none, no !important
 const hiddenClass = 'u-d-none';
 
+// ==========================================
+// 8. NATIVE-LANGUAGE DEMO TOGGLE (LATAM)
+// ==========================================
+// Shown only when the phone field's selected country is one of these (ISO2,
+// as intl-tel-input reports it). Lives in demoForm only.
+const latamCountries = ['ar', 'bo', 'br', 'cl', 'co', 'cr', 'ec', 'mx', 'pa', 'py', 'pe', 'uy'];
+const nativeLanguageWrapSelector = '[data-js="native-language-check"]';   // wrapper, shipped with u-d-none
+const nativeLanguageInputSelector = '[data-js="native-language-input"]'; // the checkbox
+const nativeLanguageTextSelector = '[data-js="native-language-text"]';   // "Demo also available in"
+const nativeLanguageLabelSelector = '[data-js="native-language-label"]'; // "Español" / "Português"
+const phoneCountrySelector = '[data-js="phone-country"]';                // hidden, mirrors the iti country
+const nativeLanguageCheckedText = 'Your demo will be in';
+// Help popup under the toggle. Both language versions live in Webflow; the
+// Portuguese one is shipped with u-d-none
+const nativeLanguagePopupSelector = '[data-js="native-language-popup-wrap"]';
+const nativeLanguagePopupEsSelector = '[data-js="native-language-popup-spanish"]';
+const nativeLanguagePopupPtSelector = '[data-js="native-language-popup-portuguese"]';
+const nativeLanguagePopupCloseSelector = '[data-js="native-language-popup-close"]'; // one Ok per language
+
 
 
 //****************
@@ -669,6 +688,102 @@ function handleMetaCookieCapture() {
   });
 }
 
+function handleLocalRepField() {
+  // Reveals the native-language demo toggle only for LATAM phone countries and
+  // mirrors the selected country into phoneCountry. A form without the toggle
+  // (inlineForm, or demoForm after a rollback) simply falls out here, so
+  // deleting the field in Webflow is the whole revert.
+  document.querySelectorAll('input[ms-code-phone-number]').forEach(input => {
+    const form = input.closest('form');
+    const field = form && form.querySelector(nativeLanguageWrapSelector);
+    if (!field) return;
+
+    const checkbox = field.querySelector(nativeLanguageInputSelector);
+    const leadText = field.querySelector(nativeLanguageTextSelector);
+    const langLabel = field.querySelector(nativeLanguageLabelSelector);
+    const countryField = form.querySelector(phoneCountrySelector);
+    // The Webflow copy stays the source of truth for the unchecked text
+    const defaultLeadText = leadText ? leadText.textContent : '';
+    const popup = field.querySelector(nativeLanguagePopupSelector);
+    const popupEs = field.querySelector(nativeLanguagePopupEsSelector);
+    const popupPt = field.querySelector(nativeLanguagePopupPtSelector);
+
+    function syncLeadText() {
+      if (leadText) leadText.textContent = checkbox.checked ? nativeLanguageCheckedText : defaultLeadText;
+    }
+
+    // Shows together with the toggle and, once closed, stays closed for the
+    // rest of the page view, country switches included
+    function closePopup() {
+      if (!popup) return;
+      // Hiding the focused Ok would drop keyboard focus to <body>
+      const hadFocus = popup.contains(document.activeElement);
+      popup.classList.add(hiddenClass);
+      if (hadFocus && checkbox) checkbox.focus();
+    }
+
+    function sync() {
+      const iti = window.intlTelInput && window.intlTelInput.getInstance(input);
+      // iso2 is undefined while a typed dial code matches no country
+      const iso2 = (iti && iti.getSelectedCountryData().iso2) || '';
+      const show = latamCountries.includes(iso2);
+
+      if (countryField) countryField.value = iso2;
+      field.classList.toggle(hiddenClass, !show);
+      if (langLabel) langLabel.textContent = iso2 === 'br' ? 'Português' : 'Español';
+      if (popupEs) popupEs.classList.toggle(hiddenClass, iso2 === 'br');
+      if (popupPt) popupPt.classList.toggle(hiddenClass, iso2 !== 'br');
+
+      // Webflow submits hidden inputs too, so a "yes" ticked under Mexico must
+      // not survive a switch to another country. Firing change lets Webflow
+      // clear its own checked visual and resets the lead text via syncLeadText.
+      // Webflow blindly toggles that visual on every change event, so only fire
+      // it when the box really was ticked.
+      if (!show && checkbox && checkbox.checked) {
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+    }
+
+    if (checkbox) {
+      checkbox.addEventListener('change', function() {
+        syncLeadText();
+        // Ticking the toggle answers the popup. The programmatic untick in
+        // sync() also fires change, but leaves the popup alone
+        if (checkbox.checked) closePopup();
+      });
+    }
+
+    // Ok is a div with role="button", so Enter and Space need wiring by hand
+    field.querySelectorAll(nativeLanguagePopupCloseSelector).forEach(btn => {
+      btn.addEventListener('click', closePopup);
+      btn.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault(); // Space would scroll the page, Enter could submit the form
+          closePopup();
+        }
+      });
+    });
+
+    // Visitor changing the flag by hand
+    input.addEventListener('countrychange', sync);
+
+    // The geo-IP guess resolves after load. The phone instance itself is created
+    // in a DOMContentLoaded listener registered AFTER this one, hence setTimeout
+    // 0 to run once it exists.
+    document.addEventListener('DOMContentLoaded', function() {
+      setTimeout(function() {
+        const iti = window.intlTelInput && window.intlTelInput.getInstance(input);
+        if (iti && iti.promise) {
+          iti.promise.then(sync, sync);
+        } else {
+          sync();
+        }
+      }, 0);
+    });
+  });
+}
+
 //****************
 //INIT
 //****************
@@ -700,6 +815,9 @@ handleButtonAnalytics();
 
 //Meta Pixel cookies (_fbp / _fbc)
 handleMetaCookieCapture();
+
+//LATAM local-language rep checkbox (demoForm only)
+handleLocalRepField();
 //
 
   document.addEventListener('DOMContentLoaded', function() {
