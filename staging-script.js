@@ -145,12 +145,17 @@ const successCopyPersonalSelector = '[data-js="success-copy-personal"]'; // "...
 const hiddenClass = 'u-d-none';
 
 // ==========================================
-// 8. LOCAL-LANGUAGE REP FIELD (LATAM)
+// 8. NATIVE-LANGUAGE DEMO TOGGLE (LATAM)
 // ==========================================
 // Shown only when the phone field's selected country is one of these (ISO2,
 // as intl-tel-input reports it). Lives in demoForm only.
 const latamCountries = ['ar', 'bo', 'br', 'cl', 'co', 'cr', 'ec', 'mx', 'pa', 'py', 'pe', 'uy'];
-const localRepFieldSelector = '[data-js="local-rep-field"]'; // wrapper, shipped with u-d-none
+const nativeLanguageWrapSelector = '[data-js="native-language-check"]';   // wrapper, shipped with u-d-none
+const nativeLanguageInputSelector = '[data-js="native-language-input"]'; // the checkbox
+const nativeLanguageTextSelector = '[data-js="native-language-text"]';   // "Demo also available in"
+const nativeLanguageLabelSelector = '[data-js="native-language-label"]'; // "Español" / "Português"
+const phoneCountrySelector = '[data-js="phone-country"]';                // hidden, mirrors the iti country
+const nativeLanguageCheckedText = 'Your demo will be in';
 
 
 
@@ -678,29 +683,48 @@ function handleMetaCookieCapture() {
 }
 
 function handleLocalRepField() {
-  // Reveals the "local-language rep" checkbox only for LATAM phone countries.
-  // A form without the field (inlineForm, or demoForm after a rollback) simply
-  // falls out here, so deleting the field in Webflow is the whole revert.
+  // Reveals the native-language demo toggle only for LATAM phone countries and
+  // mirrors the selected country into phoneCountry. A form without the toggle
+  // (inlineForm, or demoForm after a rollback) simply falls out here, so
+  // deleting the field in Webflow is the whole revert.
   document.querySelectorAll('input[ms-code-phone-number]').forEach(input => {
     const form = input.closest('form');
-    const field = form && form.querySelector(localRepFieldSelector);
+    const field = form && form.querySelector(nativeLanguageWrapSelector);
     if (!field) return;
+
+    const checkbox = field.querySelector(nativeLanguageInputSelector);
+    const leadText = field.querySelector(nativeLanguageTextSelector);
+    const langLabel = field.querySelector(nativeLanguageLabelSelector);
+    const countryField = form.querySelector(phoneCountrySelector);
+    // The Webflow copy stays the source of truth for the unchecked text
+    const defaultLeadText = leadText ? leadText.textContent : '';
+
+    function syncLeadText() {
+      if (leadText) leadText.textContent = checkbox.checked ? nativeLanguageCheckedText : defaultLeadText;
+    }
 
     function sync() {
       const iti = window.intlTelInput && window.intlTelInput.getInstance(input);
-      const iso2 = iti ? iti.getSelectedCountryData().iso2 : '';
+      // iso2 is undefined while a typed dial code matches no country
+      const iso2 = (iti && iti.getSelectedCountryData().iso2) || '';
       const show = latamCountries.includes(iso2);
 
+      if (countryField) countryField.value = iso2;
       field.classList.toggle(hiddenClass, !show);
+      if (langLabel) langLabel.textContent = iso2 === 'br' ? 'Português' : 'Español';
 
       // Webflow submits hidden inputs too, so a "yes" ticked under Mexico must
-      // not survive a switch to another country. The custom checkbox visual is
-      // a separate div with its own checked class, so clear both.
-      if (!show) {
-        field.querySelectorAll('input[type="checkbox"]').forEach(cb => { cb.checked = false; });
-        field.querySelectorAll('.w--redirected-checked').forEach(el => el.classList.remove('w--redirected-checked'));
+      // not survive a switch to another country. Firing change lets Webflow
+      // clear its own checked visual and resets the lead text via syncLeadText.
+      // Webflow blindly toggles that visual on every change event, so only fire
+      // it when the box really was ticked.
+      if (!show && checkbox && checkbox.checked) {
+        checkbox.checked = false;
+        checkbox.dispatchEvent(new Event('change', { bubbles: true }));
       }
     }
+
+    if (checkbox) checkbox.addEventListener('change', syncLeadText);
 
     // Visitor changing the flag by hand
     input.addEventListener('countrychange', sync);
