@@ -156,6 +156,12 @@ const nativeLanguageTextSelector = '[data-js="native-language-text"]';   // "Dem
 const nativeLanguageLabelSelector = '[data-js="native-language-label"]'; // "Español" / "Português"
 const phoneCountrySelector = '[data-js="phone-country"]';                // hidden, mirrors the iti country
 const nativeLanguageCheckedText = 'Your demo will be in';
+// Help popup under the toggle. Both language versions live in Webflow; the
+// Portuguese one is shipped with u-d-none
+const nativeLanguagePopupSelector = '[data-js="native-language-popup-wrap"]';
+const nativeLanguagePopupEsSelector = '[data-js="native-language-popup-spanish"]';
+const nativeLanguagePopupPtSelector = '[data-js="native-language-popup-portuguese"]';
+const nativeLanguagePopupCloseSelector = '[data-js="native-language-popup-close"]'; // one Ok per language
 
 
 
@@ -698,9 +704,22 @@ function handleLocalRepField() {
     const countryField = form.querySelector(phoneCountrySelector);
     // The Webflow copy stays the source of truth for the unchecked text
     const defaultLeadText = leadText ? leadText.textContent : '';
+    const popup = field.querySelector(nativeLanguagePopupSelector);
+    const popupEs = field.querySelector(nativeLanguagePopupEsSelector);
+    const popupPt = field.querySelector(nativeLanguagePopupPtSelector);
 
     function syncLeadText() {
       if (leadText) leadText.textContent = checkbox.checked ? nativeLanguageCheckedText : defaultLeadText;
+    }
+
+    // Shows together with the toggle and, once closed, stays closed for the
+    // rest of the page view, country switches included
+    function closePopup() {
+      if (!popup) return;
+      // Hiding the focused Ok would drop keyboard focus to <body>
+      const hadFocus = popup.contains(document.activeElement);
+      popup.classList.add(hiddenClass);
+      if (hadFocus && checkbox) checkbox.focus();
     }
 
     function sync() {
@@ -712,6 +731,8 @@ function handleLocalRepField() {
       if (countryField) countryField.value = iso2;
       field.classList.toggle(hiddenClass, !show);
       if (langLabel) langLabel.textContent = iso2 === 'br' ? 'Português' : 'Español';
+      if (popupEs) popupEs.classList.toggle(hiddenClass, iso2 === 'br');
+      if (popupPt) popupPt.classList.toggle(hiddenClass, iso2 !== 'br');
 
       // Webflow submits hidden inputs too, so a "yes" ticked under Mexico must
       // not survive a switch to another country. Firing change lets Webflow
@@ -724,7 +745,25 @@ function handleLocalRepField() {
       }
     }
 
-    if (checkbox) checkbox.addEventListener('change', syncLeadText);
+    if (checkbox) {
+      checkbox.addEventListener('change', function() {
+        syncLeadText();
+        // Ticking the toggle answers the popup. The programmatic untick in
+        // sync() also fires change, but leaves the popup alone
+        if (checkbox.checked) closePopup();
+      });
+    }
+
+    // Ok is a div with role="button", so Enter and Space need wiring by hand
+    field.querySelectorAll(nativeLanguagePopupCloseSelector).forEach(btn => {
+      btn.addEventListener('click', closePopup);
+      btn.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault(); // Space would scroll the page, Enter could submit the form
+          closePopup();
+        }
+      });
+    });
 
     // Visitor changing the flag by hand
     input.addEventListener('countrychange', sync);
