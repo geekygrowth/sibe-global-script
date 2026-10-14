@@ -163,6 +163,14 @@ const nativeLanguagePopupEsSelector = '[data-js="native-language-popup-spanish"]
 const nativeLanguagePopupPtSelector = '[data-js="native-language-popup-portuguese"]';
 const nativeLanguagePopupCloseSelector = '[data-js="native-language-popup-close"]'; // one Ok per language
 
+// ==========================================
+// 9. CAL LINK + CRISP ATTRIBUTION
+// ==========================================
+// Cal.com only forwards metadata[...] params to the booking webhook, never
+// plain utm_*. Same key set is pushed to Crisp as session data.
+const calLinkSource = 'site-cal-link';
+// Cal and Crisp both reject very long values
+const attributionMaxLength = 500;
 
 
 //****************
@@ -784,6 +792,109 @@ function handleLocalRepField() {
   });
 }
 
+function getAttributionData() {
+  // The full set, read fresh at call time. Empty values are dropped, so
+  // nothing downstream ever receives an empty key.
+  // First-touch keys stay unprefixed (they match the existing Make mapping),
+  // last-touch use lt_ with an underscore, which Crisp accepts as a key.
+  const data = {};
+
+  fieldMappings.forEach(mapping => {
+    data[mapping.key] = localStorage.getItem(mapping.key);
+  });
+  data.referrer = localStorage.getItem(initialReferrerKey);
+  data.first_page = localStorage.getItem(initialPathKey);
+
+  ltFieldMappings.forEach(mapping => {
+    data[mapping.key.replace('lt-', 'lt_')] = localStorage.getItem(mapping.key);
+  });
+  data.lt_referrer = localStorage.getItem(ltInitialReferrerKey);
+  data.lt_first_page = localStorage.getItem(ltInitialPathKey);
+
+  data.session_referrer = sessionStorage.getItem(sessionReferrerKey);
+  data.session_first_page = sessionStorage.getItem(sessionInitialPathKey);
+
+  data.page = window.location.pathname;
+
+  // PostHog keeps its own id, we never store it. Guarded in case it is blocked
+  // or has not loaded yet.
+  try {
+    if (window.posthog && typeof posthog.get_distinct_id === 'function') {
+      data.ph_id = posthog.get_distinct_id();
+    }
+  } catch (e) {}
+
+  Object.keys(data).forEach(key => {
+    const value = data[key];
+    if (!value) {
+      delete data[key];
+    } else {
+      data[key] = String(value).slice(0, attributionMaxLength);
+    }
+  });
+
+  return data;
+}
+
+function isCalUrl(url) {
+  return url.hostname === 'cal.com' || url.hostname.endsWith('.cal.com');
+}
+
+function tagCalLinks() {
+  // Cal links mostly arrive later, inside Crisp chat messages, so a one-off
+  // pass at load (like appendUtmToLinks) would miss them. Instead the href is
+  // rewritten right before the browser follows it. Crisp opens links natively
+  // from their href, so no preventDefault or window.open is needed, and
+  // middle / Cmd+click keep working.
+  function tag(e) {
+    const link = e.target.closest && e.target.closest('a[href]');
+    if (!link) return;
+
+    let url;
+    try {
+      url = new URL(link.href);
+    } catch (err) {
+      return;
+    }
+    if (!isCalUrl(url)) return;
+
+    const data = getAttributionData();
+    data.source = calLinkSource;
+
+    // set, not append, so repeated clicks never stack duplicates
+    Object.keys(data).forEach(key => {
+      url.searchParams.set('metadata[' + key + ']', data[key]);
+    });
+
+    link.href = url.toString();
+  }
+
+  // pointerdown: mouse (any button) and touch. keydown: Enter on a focused
+  // link. contextmenu: "Copy link address". All capture phase, so we run
+  // before Crisp or anything else sees the event.
+  document.addEventListener('pointerdown', tag, true);
+  document.addEventListener('contextmenu', tag, true);
+  document.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') tag(e);
+  }, true);
+}
+
+function pushCrispSessionData() {
+  // Crisp's loader is a separate tag that may run after this script, so wait
+  // for the page load and only push when Crisp is actually on the page.
+  // Crisp queues pushes made before its session is ready. Waiting for load
+  // also means PostHog is up, so ph_id is included.
+  window.addEventListener('load', function() {
+    if (!window.$crisp) return;
+
+    const data = getAttributionData();
+    const pairs = Object.keys(data).map(key => [key, data[key]]);
+    if (pairs.length) {
+      $crisp.push(['set', 'session:data', [pairs]]);
+    }
+  });
+}
+
 //****************
 //INIT
 //****************
@@ -818,6 +929,10 @@ handleMetaCookieCapture();
 
 //LATAM local-language rep checkbox (demoForm only)
 handleLocalRepField();
+
+//Cal links carry attribution as metadata[...], Crisp gets the same set
+tagCalLinks();
+pushCrispSessionData();
 //
 
   document.addEventListener('DOMContentLoaded', function() {
